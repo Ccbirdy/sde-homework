@@ -1,88 +1,88 @@
-# Supplier Delivery Performance on Databricks
+# Lieferantenperformance auf Databricks
 
-[中文](README.zh-CN.md)
+## Projekt
 
-## Project overview
+Dieses Projekt analysiert die Lieferleistung für die fiktive Nordbau Handels GmbH. Das Unternehmen handelt mit Baustoffen und hat vier Niederlassungen. Der Einkauf erfasst Liefertermine und Mengenabweichungen bisher manuell in Excel.
 
-This project uses SAP export data to assess supplier delivery performance for a fictional building materials distributor with four branches. It aims to replace manual tracking with a repeatable monthly analysis.
+Ziel ist eine automatische monatliche Auswertung: **Welche drei Lieferanten sind die schwächsten, und warum?** Die Ergebnisse sollen Pünktlichkeit, Vollständigkeit, Fallzahlen und konkrete Bestellpositionen zeigen. Später sollen Rechnungen und Reklamationen ergänzt werden können.
 
-The key business question is: **Which three suppliers perform worst, and why?** Results will show delivery timeliness, quantity fulfilment, sample sizes, and supporting order details.
+**Stand:** Projektstruktur und erste lokale Datenprüfungen sind abgeschlossen. Pipeline, Kennzahlen und Asset Bundle sind noch nicht implementiert. Es gibt noch keine geprüfte Rangliste und keinen bestätigten Lauf in Databricks.
 
-**Current status:** Project structure and initial local data checks are complete. The Databricks pipeline, metrics, and deployment are not implemented yet. No supplier ranking or Databricks run has been validated.
+## Daten
 
-## Data
+Die Grundlage sind sieben synthetische SAP-Exporte aus dem bereitgestellten MM-Datenpaket. Die CSV-Dateien nutzen UTF-8 und Semikolon als Trennzeichen. Die Zeilenzahlen enthalten mögliche Duplikate, aber keine Kopfzeile.
 
-The input contains seven synthetic CSV exports from SAP ECC MM. Files use UTF-8 encoding and semicolon separators. Row counts below include duplicate records and exclude headers.
-
-| Export | Content | Rows |
+| Tabelle | Inhalt | Zeilen |
 |---|---|---:|
-| LFA1 | Supplier master | 15 |
-| MARA/MAKT | Material master and descriptions | 24 |
-| EKKO | Purchase order headers | 216 |
-| EKPO | Purchase order items | 468 |
-| EKET | Purchase order schedule lines | 820 |
-| LIKP | Delivery headers | 957 |
-| LIPS | Delivery items | 963 |
+| LFA1 | Lieferantenstammdaten | 15 |
+| MARA/MAKT | Materialstammdaten und Texte | 24 |
+| EKKO | Bestellköpfe | 216 |
+| EKPO | Bestellpositionen | 468 |
+| EKET | Einteilungen zu Bestellpositionen | 820 |
+| LIKP | Lieferköpfe | 957 |
+| LIPS | Lieferpositionen | 963 |
 
-Source files remain unchanged at `../DIC_Arbeitsprobe_Testdaten_SAP_MM/` in the local setup. Initial checks found duplicate candidate keys in EKKO, EKPO, EKET, and LIPS. Their causes and treatment are still under review.
+Die Quelldateien bleiben unverändert. Lokal liegen sie unter `../DIC_Arbeitsprobe_Testdaten_SAP_MM/`. Erste Prüfungen zeigen doppelte mögliche Schlüssel in EKKO, EKPO, EKET und LIPS. Ursachen und Behandlung sind noch offen.
 
-## Implementation checklist
+## Meilensteine
 
-Checked items are completed at the stated scope. Unchecked items are planned work. Configuration and successful execution are tracked separately.
+### M1 · Daten verstehen und Qualität prüfen
 
-### Data preparation and quality
+- [x] Projektstruktur anlegen und alle sieben CSV-Dateien lokal lesen.
+- [x] Felder, Beispiele, Zeilenzahlen und doppelte mögliche Schlüssel lokal prüfen.
+- [ ] Fehlende Werte, Datumswerte, Mengen, Einheiten und Verknüpfungen prüfen.
+- [ ] Regeln für Duplikate und fehlerhafte Datensätze festlegen und umsetzen.
 
-- [x] Create the project structure.
-- [x] Read all seven CSV files locally and inspect headers and samples.
-- [x] Count source rows and check duplicate candidate keys locally.
-- [ ] Validate relationships, missing values, dates, quantities, and units.
-- [ ] Define and implement rules for duplicates and invalid records.
+### M2 · Datenarchitektur und Datenmodell
 
-### Databricks Medallion architecture
+- [ ] Datenfluss und Schichten kurz darstellen und die Auswahl begründen.
+- [ ] Die Granularität jeder Zieltabelle, ihre Schlüssel und Beziehungen festlegen.
+- [ ] Bestellpositionen, Einteilungen und Teillieferungen ohne doppelte Mengen verbinden.
+- [ ] Niederlassungen im Modell berücksichtigen und die spätere Ergänzung von Rechnungen und Reklamationen beschreiben.
 
-- [ ] Bronze: ingest source records and preserve source information.
-- [ ] Silver: apply types, quality rules, and validated relationships.
-- [ ] Gold: build monthly supplier and branch metrics with traceable details.
-- [ ] Verify that reruns do not duplicate results.
-- [ ] Run and validate the pipeline in Databricks.
+### M3 · Pipeline-Aufbau: Medallion-Architektur in Databricks
 
-### Metrics and business results
+- [ ] Bronze: Quelldaten laden und Herkunft erhalten.
+- [ ] Silver: Datentypen, Qualitätsregeln und geprüfte Beziehungen umsetzen.
+- [ ] Gold: monatliche Kennzahlen nach Lieferant und Niederlassung mit nachvollziehbaren Details erstellen.
+- [ ] Task-Reihenfolge, Berichtszeitraum und Fehlerbehandlung festlegen; wiederholte Läufe ohne doppelte Ergebnisse prüfen.
+- [ ] Die Pipeline in Databricks ausführen und die Ergebnisse prüfen.
 
-- [ ] Define timeliness, quantity fulfilment, reporting periods, and partial-delivery rules.
-- [ ] Define ranking criteria and show sample sizes.
-- [ ] Identify the three weakest suppliers and explain each result with order details.
-- [ ] Check calculations against selected source examples and document limitations.
+### M4 · Kennzahlen und Geschäftsergebnis
 
-### Databricks Asset Bundle (DAB) and scheduling
+- [ ] Pünktlichkeit, Vollständigkeit, Teillieferungen und die Zuordnung zum Berichtsmonat definieren; die Granularität begründen.
+- [ ] Rangfolge und Fallzahlen festlegen; Berechnungen anhand einzelner Bestellungen prüfen.
+- [ ] Die drei schwächsten Lieferanten nennen und die Ursachen mit Details belegen.
+- [ ] Annahmen und Grenzen der Ergebnisse erklären.
 
-- [ ] Package code, Jobs, and configuration in an Asset Bundle.
-- [ ] Configure separate `dev` and `prod` targets.
-- [ ] Configure task dependencies and a monthly schedule with reporting parameters.
-- [ ] Validate the Bundle configuration.
-- [ ] Deploy and run in an available Databricks environment; record the target and evidence.
+### M5 · Deployment und Zugriff
 
-### Branch access
+- [ ] Code, Jobs und Konfiguration als Databricks Asset Bundle (DAB) mit `dev` und `prod` bereitstellen.
+- [ ] Einen monatlichen Job mit Parametern, Abhängigkeiten und Zeitzone konfigurieren.
+- [ ] Bundle-Konfiguration prüfen; Deployment und Lauf im verfügbaren Workspace mit Ziel und Nachweis dokumentieren.
+- [ ] Zugriff je Niederlassung vorbereiten: Zuordnung der Nutzer und Umsetzung der Zugriffsregeln beschreiben.
+- [ ] Tatsächlich geprüfte Zugriffe von noch offenen Maßnahmen trennen; Start und Deployment dokumentieren.
 
-- [ ] Preserve branch identifiers in the analytical model.
-- [ ] Document user-to-branch access rules and the enforcement approach.
-- [ ] Clearly distinguish the access design from any tested access controls.
+### M6 · Skalierbarkeit, Optimierungen und Produktion
 
-### Documentation and presentation
+- [ ] Engpässe bei mehr Daten benennen und passende Verbesserungen begründen, zum Beispiel bei Ladevorgängen, Joins oder Speicherung.
+- [ ] Das Vorgehen für neue und geänderte Daten erklären; die Grenzen des aktuellen Ansatzes nennen.
+- [ ] Weitere Schritte für den Betrieb priorisieren, etwa Überwachung, Wiederanlauf, Berechtigungen und Tests.
 
-- [x] Add English and Chinese project READMEs.
-- [ ] Document final assumptions, decisions, results, and next steps.
-- [ ] Add instructions for the implemented run and deployment process.
-- [ ] Prepare a concise walkthrough of the solution and evidence.
-- [ ] Optional: build a Power BI report after the required engineering work.
+### M7 · Dokumentation und Vorstellung
 
-## Project structure
+- [ ] Rückfragen, eigene Entscheidungen und Annahmen kurz dokumentieren.
+- [ ] Lösung, Ergebnisse und zentrale Entscheidungen mit passenden Nachweisen präsentieren.
+- [ ] Optional: einen Power-BI-Bericht erstellen, wenn er die Analyse unterstützt.
+
+## Projektstruktur
 
 ```text
 databricks/
-  src/          Ingestion, transformation, and metrics
-  resources/    Job configuration
-tests/          Data logic and result checks
-outputs/        Analysis results and validation evidence
+  src/          Laden, Aufbereiten und Kennzahlen
+  resources/    Job-Konfiguration
+tests/          Prüfungen der Datenlogik und Ergebnisse
+outputs/        Ergebnisse und Prüfnachweise
 ```
 
-These directories are placeholders for implementation. Run and deployment instructions will be added when executable code and configuration are available.
+Die Verzeichnisse sind bisher Platzhalter. Anleitungen zum Ausführen und Deployment folgen mit der Implementierung.
