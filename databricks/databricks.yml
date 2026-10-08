@@ -1,0 +1,12 @@
+bundle:
+  name: supplier_performance
+
+targets:
+  dev:
+    default: true
+    mode: development
+
+  prod:
+    mode: production
+    workspace:
+      root_path: /Workspace/Users/guochengcheng93@gmail.com/.bundle/${bundle.name}/${bundle.target}
