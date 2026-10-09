@@ -1,0 +1,8 @@
+resources:
+  schemas:
+    project_schema:
+      name: ${var.schema_name}
+      catalog_name: ${var.catalog}
+      comment: Lieferantenperformance (${bundle.target}).
+      lifecycle:
+        prevent_destroy: true

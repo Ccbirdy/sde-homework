@@ -1,12 +1,31 @@
 bundle:
   name: supplier_performance
 
+experimental:
+  skip_name_prefix_for_schema: true
+
+include:
+  - resources/schema.yml
+  - resources/volume.yml
+
+variables:
+  catalog:
+    default: workspace
+  schema_name:
+    description: Schema für das jeweilige Deployment-Ziel.
+
 targets:
   dev:
     default: true
     mode: development
+    presets:
+      name_prefix: ""
+    variables:
+      schema_name: supplier_performance_dev
 
   prod:
     mode: production
+    variables:
+      schema_name: supplier_performance_prod
     workspace:
       root_path: /Workspace/Users/guochengcheng93@gmail.com/.bundle/${bundle.name}/${bundle.target}
