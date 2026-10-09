@@ -2,6 +2,8 @@
 # MAGIC %md
 # MAGIC # Silver: SAP-Daten bereinigen
 # MAGIC Gültige Datensätze und Quarantäne getrennt speichern. Regeln: DATA_RULES.md.
+# MAGIC Datumsfelder werden als DATE gespeichert (Anzeige meist yyyy-MM-dd).
+# MAGIC Nummern bleiben STRING mit führenden Nullen; Mengen und Beträge bleiben DECIMAL.
 
 # COMMAND ----------
 # MAGIC %md
