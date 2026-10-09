@@ -1,3 +1,15 @@
 # Local learning notes and working documentation
 /docs/
 /README.zh-CN.md
+
+# Local Python environment and caches
+/.venv/
+/.uv-cache/
+**/__pycache__/
+**/.ipynb_checkpoints/
+
+# Local Databricks state and credentials
+**/.databricks/
+.databrickscfg
+.env
+.env.*

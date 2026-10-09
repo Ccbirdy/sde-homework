@@ -3,6 +3,12 @@ resources:
     supplier_performance:
       name: supplier_performance
       max_concurrent_runs: 1
+      # Optional: täglich um 06:00 Uhr in Berlin. Derzeit nicht aktiviert.
+      # schedule:
+      #   quartz_cron_expression: '0 0 6 * * ?'
+      #   timezone_id: Europe/Berlin
+      #   pause_status: PAUSED
+      # Monatliche Alternative: '0 0 6 1 * ?' (am 1. des Monats).
       parameters:
         - name: catalog
           default: ${var.catalog}
