@@ -1,7 +1,7 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # Bronze: SAP-Dateien laden
-# MAGIC Quelldaten als Zeichenketten speichern. Jeder Lauf ersetzt den aktuellen Tabelleninhalt.
+# MAGIC CSV-Dateien aus der Landing Zone als Zeichenketten speichern. Jeder Lauf ersetzt den aktuellen Tabelleninhalt.
 
 # COMMAND ----------
 # MAGIC %md
@@ -10,10 +10,15 @@
 # COMMAND ----------
 from pyspark.sql import functions as F
 
-dbutils.widgets.text("catalog", "")
-dbutils.widgets.text("schema_name", "")
-dbutils.widgets.text("source_path", "")
+dbutils.widgets.text("catalog", "workspace", "Zielkatalog")
+dbutils.widgets.text("schema_name", "supplier_performance_dev", "Zielschema")
+dbutils.widgets.text(
+    "source_path",
+    "/Volumes/workspace/supplier_performance_dev/source_files",
+    "Landing Zone",
+)
 
+# COMMAND ----------
 catalog = dbutils.widgets.get("catalog").strip()
 schema_name = dbutils.widgets.get("schema_name").strip()
 source_path = dbutils.widgets.get("source_path").strip().rstrip("/")

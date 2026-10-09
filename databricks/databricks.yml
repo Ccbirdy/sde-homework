@@ -7,6 +7,7 @@ experimental:
 include:
   - resources/schema.yml
   - resources/volume.yml
+  - resources/supplier_performance.job.yml
 
 variables:
   catalog:
@@ -17,14 +18,18 @@ variables:
 targets:
   dev:
     default: true
-    mode: development
     presets:
-      name_prefix: ""
+      name_prefix: "dev_"
+      trigger_pause_status: PAUSED
+      tags:
+        dev: "dev"
     variables:
       schema_name: supplier_performance_dev
 
   prod:
     mode: production
+    presets:
+      name_prefix: "prod_"
     variables:
       schema_name: supplier_performance_prod
     workspace:

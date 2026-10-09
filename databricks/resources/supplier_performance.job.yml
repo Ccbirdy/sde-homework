@@ -1,0 +1,17 @@
+resources:
+  jobs:
+    supplier_performance:
+      name: supplier_performance
+      max_concurrent_runs: 1
+      parameters:
+        - name: catalog
+          default: ${var.catalog}
+        - name: schema_name
+          default: ${resources.schemas.project_schema.name}
+        - name: source_path
+          default: ${resources.volumes.source_files.volume_path}
+      tasks:
+        - task_key: bronze
+          notebook_task:
+            notebook_path: ../src/01_bronze.py
+            source: WORKSPACE
