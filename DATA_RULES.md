@@ -53,3 +53,15 @@ Die Quarantäne kann die spätere Bewertung verändern, auch durch abhängige Da
 ## Noch offene Geschäftsregeln
 
 Bedeutung von WADAT_IST als tatsächlichem Lieferdatum, Statistikstichtag, Umgang mit gelöschten Positionen in der Bewertung, Zuordnung von Teillieferungen, Toleranzen und Ranking. Silver führt noch keine Zuordnung von Lieferungen zu EKET-Zeilen und keine Summierung über diese Beziehungen aus.
+
+## Entscheidungsstatus
+
+Eine implementierte Regel ist noch keine fachliche Bestätigung. Nach Sichtung der Quarantäne werden Änderungen mit Datum, Grundlage und Auswirkung dokumentiert.
+
+| Thema | Status | Nächster Schritt |
+|---|---|---|
+| Formatumwandlung, Duplikate und Quarantäne | Vorläufig implementiert | Ergebnisse sichten und Regel je nach Befund beibehalten oder ändern. |
+| LOEKZ, Einheiten und Pflicht für WADAT_IST | Vorläufige Annahmen | Fachliche Bedeutung klären; die aktuelle Verarbeitung ist keine Kundenbestätigung. |
+| Lieferdatum, Stichtag, Teillieferungen und Ranking | Offen | Eigene begründete Entscheidung oder Rücksprache mit dem Auftraggeber festhalten. |
+
+Für neue Entscheidungen erfassen wir: Datum, betroffene Regel, Datenbefund, Entscheidung, Herkunft (`eigene Entscheidung`, `Rückfrage offen` oder `vom Auftraggeber bestätigt`) und Auswirkung auf Code und Auswertung. Kundenbestätigungen werden nur mit tatsächlicher Antwort dokumentiert.

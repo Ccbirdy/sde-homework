@@ -25,8 +25,8 @@ Der GitHub-Actions-Workflow wurde einmal manuell ausgeführt. Die Auswahl zwisch
 
 ## Aufbau
 
-- `00_dataquality/`: Datenprüfung und lokale Ergebnisse.
-- `databricks/`: Bundle-Konfiguration, Ressourcen sowie Bronze- und Silver-Notebook.
+- `databricks/src/`: lokale Datenprüfung (`00_dataquality.ipynb`) sowie Bronze- und Silver-Notebook.
+- `databricks/resources/`: Schema, Volume und Job als Bundle-Ressourcen.
 
 ## Offene Entscheidungen
 
