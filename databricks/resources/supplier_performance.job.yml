@@ -21,3 +21,9 @@ resources:
           notebook_task:
             notebook_path: ../src/01_bronze.py
             source: WORKSPACE
+        - task_key: silver
+          depends_on:
+            - task_key: bronze
+          notebook_task:
+            notebook_path: ../src/02_silver.py
+            source: WORKSPACE

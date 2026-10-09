@@ -1,14 +1,23 @@
-name: Deploy Databricks dev
-run-name: Deploy dev from ${{ github.ref_name }}
+name: Deploy Databricks
+run-name: Deploy ${{ inputs.target }} from ${{ github.ref_name }}
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: Deployment-Ziel
+        type: choice
+        required: true
+        default: dev
+        options:
+          - dev
+          - prod
 
 permissions:
   contents: read
 
 concurrency:
-  group: databricks-supplier-performance-dev
+  group: databricks-supplier-performance-${{ inputs.target }}
   cancel-in-progress: false
 
 jobs:
@@ -23,10 +32,11 @@ jobs:
         with:
           version: '1.20.0'
 
-      - name: Deploy dev
+      - name: Deploy bundle
         working-directory: databricks
         env:
           DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
           DATABRICKS_AUTH_TYPE: pat
-        run: databricks bundle deploy -t dev
+          BUNDLE_TARGET: ${{ inputs.target }}
+        run: databricks bundle deploy -t "$BUNDLE_TARGET"

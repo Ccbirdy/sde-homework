@@ -12,21 +12,22 @@ Die lokale Prüfung zeigt doppelte Kandidatenschlüssel, unterschiedliche Datums
 
 - [x] Lokales Notebook zur Datenqualität mit Prüfergebnissen.
 - [x] Bundle-Grundkonfiguration mit `dev` und `prod`; Schema und Volume in `dev` bereitgestellt.
-- [ ] Bronze-, Silver- und Gold-Verarbeitung sowie Kennzahlen und Rangliste.
-- [ ] Validierung, Deployment und Lauf in Databricks.
+- [x] Bronze: sieben Delta-Tabellen in `dev` geladen.
+- [ ] Silver, Gold, Kennzahlen und Rangliste.
+- [x] Bronze-Job in Databricks bereitgestellt und ausgeführt.
 - [ ] Zugriff nach Niederlassung.
 
-Die Datenprüfung liegt lokal vor. Schema und Volume sind in `dev` bereitgestellt. Alle sieben CSV-Dateien liegen im Volume; Dateinamen und Größen stimmen mit den lokalen Dateien überein. Das Bronze-Notebook und ein Job mit Parametern sind in `dev` bereitgestellt, aber noch nicht ausgeführt. Silver, Gold und Lieferantenbewertung fehlen noch.
+Die Datenprüfung liegt lokal vor. Alle sieben CSV-Dateien wurden in `dev` als Bronze-Tabellen geladen. Die Zeilenzahlen stimmen mit den Quelldateien überein. Silver-Code und die Job-Abhängigkeit nach Bronze sind vorhanden, aber noch nicht ausgeführt. Silver trennt verwendbare Datensätze und Quarantäne mit Fehlergründen. Gold und Lieferantenbewertung fehlen noch.
 
 Die CSV-Dateien im Volume bilden die Landing Zone. Bronze lädt daraus Delta-Tabellen; Silver bereinigt die Daten; Gold berechnet die Kennzahlen. Entscheidungen und offene Regeln stehen in [DATA_RULES.md](DATA_RULES.md).
 
-Ein GitHub-Actions-Workflow für die manuelle Bereitstellung nach `dev` ist vorbereitet. Die Anmeldung ist noch nicht eingerichtet; der Workflow wurde noch nicht ausgeführt.
+Der GitHub-Actions-Workflow wurde einmal manuell ausgeführt. Die Auswahl zwischen `dev` und `prod` ist ergänzt, aber noch nicht ausgeführt. Beide Ziele verwenden denselben Workspace mit getrennten Schemas und Jobs.
 
 ## Aufbau
 
 - `00_dataquality/`: Datenprüfung und lokale Ergebnisse.
-- `databricks/`: Bundle-Konfiguration, Ressourcen und Bronze-Notebook.
+- `databricks/`: Bundle-Konfiguration, Ressourcen sowie Bronze- und Silver-Notebook.
 
 ## Offene Entscheidungen
 
-Auswahl bei widersprüchlichen Datensätzen, Zuordnung von Teillieferungen, Einheitenumrechnung und Kennzahlendefinitionen. Die Quelldateien bleiben unverändert; fachliche Annahmen werden bei der Umsetzung dokumentiert.
+Zuordnung von Teillieferungen, fachliche Bestätigung der Annahmen und Kennzahlendefinitionen. Konflikte und ungeklärte Einheiten werden vorerst isoliert. Die Quelldateien bleiben unverändert.
