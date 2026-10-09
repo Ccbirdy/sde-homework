@@ -2,7 +2,8 @@
 # MAGIC %md
 # MAGIC # Gold: Monatliche Lieferantenperformance
 # MAGIC Eine Bewertung je Bestellposition. Der letzte Einteilungstermin bestimmt den Monat.
-# MAGIC Pünktlich: bis zu diesem Termin vollständig geliefert. Vollständig: bis Monatsende geliefert.
+# MAGIC - Pünktlich: bis zu diesem Termin vollständig geliefert.
+# MAGIC - Vollständig: bis Monatsende geliefert.
 # MAGIC Annahmen und Grenzen stehen in DATA_RULES.md. Einzelne Teiltermine werden nicht bewertet.
 
 # COMMAND ----------

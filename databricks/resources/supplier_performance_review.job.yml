@@ -1,0 +1,30 @@
+resources:
+  jobs:
+    supplier_performance_review:
+      name: supplier_performance_review
+      max_concurrent_runs: 1
+      tags:
+        project: supplier_performance
+        environment: ${bundle.target}
+        cost_center: ${var.cost_center}
+        purpose: result_review
+      # Nach Einrichtung derselben Serverless usage policy wie im Hauptjob aktivieren.
+      # budget_policy_id: ${var.serverless_usage_policy_id}
+      parameters:
+        - name: catalog
+          default: ${var.catalog}
+        - name: schema_name
+          default: ${resources.schemas.project_schema.name}
+        - name: report_month
+          default: '2026-09-01'
+        - name: branch
+          default: 'ALL'
+        - name: po_number
+          default: ''
+        - name: po_item
+          default: ''
+      tasks:
+        - task_key: review_results
+          notebook_task:
+            notebook_path: ../src/05_result_queries.sql
+            source: WORKSPACE

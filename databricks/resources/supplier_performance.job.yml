@@ -2,6 +2,13 @@ resources:
   jobs:
     supplier_performance:
       name: supplier_performance
+      tags:
+        project: supplier_performance
+        environment: ${bundle.target}
+        cost_center: ${var.cost_center}
+      # Serverless-Abrechnungstags kommen aus der usage policy, nicht aus Notebook-Parametern.
+      # Erst mit echter Policy-ID auch die Variable in databricks.yml aktivieren.
+      # budget_policy_id: ${var.serverless_usage_policy_id}
       max_concurrent_runs: 1
       # Täglich um 06:00 Uhr in Berlin. Der Zeitplan ist pausiert.
       schedule:

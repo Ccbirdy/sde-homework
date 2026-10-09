@@ -33,4 +33,6 @@ Gold bewertet Bestellpositionen im Monat ihres letzten Plantermins. Pünktlichke
 
 ## Offene Entscheidungen
 
+Ein separates Kosten-Notebook bietet simulierte Daten und Abfragen gegen die Billing-Systemtabellen. Ressourcen-Tags sind im Job konfiguriert; eine Serverless usage policy ist noch nicht gebunden. SQL-Abfragen für die Gold-Ergebnisse sind ebenfalls vorbereitet. Zugriffsentwurf und Betriebsgrenzen stehen in [OPERATIONS.md](OPERATIONS.md). Die neuen Notebooks sind noch nicht ausgeführt.
+
 Bedeutung des Lieferdatums, Vollständigkeit des Exports, Bewertung einzelner Teiltermine sowie Bestätigung der Kennzahlenregeln. Konflikte und ungeklärte Einheiten werden vorerst isoliert. Ausgeschlossene Daten begrenzen die Lieferantenbewertung; fehlende gültige Lieferungen allein beweisen keine Nichtlieferung. Die Quelldateien bleiben unverändert.

@@ -8,8 +8,16 @@ include:
   - resources/schema.yml
   - resources/volume.yml
   - resources/supplier_performance.job.yml
+  - resources/supplier_performance_review.job.yml
 
 variables:
+  cost_center:
+    description: Kostenstelle für die Zuordnung des Projekts.
+    default: supplier_analytics
+  # Nach Erstellung einer Serverless usage policy aktivieren.
+  # serverless_usage_policy_id:
+  #   description: ID der bestehenden Policy im jeweiligen Ziel.
+  #   default: '<policy-id>'
   catalog:
     default: workspace
   schema_name:
