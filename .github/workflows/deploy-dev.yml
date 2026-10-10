@@ -47,15 +47,3 @@ jobs:
           fi
           databricks bundle validate -t "$BUNDLE_TARGET"
           databricks bundle deploy -t "$BUNDLE_TARGET"
-
-      - name: Upload verified demo source files
-        env:
-          DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-          DATABRICKS_AUTH_TYPE: pat
-          BUNDLE_TARGET: ${{ inputs.target }}
-        run: |
-          python scripts/verify_source_files.py
-          for source in data/source/*.csv; do
-            databricks fs cp "$source" "dbfs:/Volumes/supplier_performance_${BUNDLE_TARGET}/${BUNDLE_TARGET}_landing/${BUNDLE_TARGET}_source_files/$(basename "$source")" --overwrite
-          done

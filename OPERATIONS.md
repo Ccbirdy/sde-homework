@@ -6,7 +6,7 @@ Updated: 2026-10-11. The revised code uses a dedicated project catalog and Engli
 
 ```text
 supplier_performance_dev
-  dev_landing       dev_source_files (Volume)
+  dev_landing       dev_source_files (unused legacy Volume; retained for safe deployment)
   dev_bronze        dev_lfa1, dev_mara, dev_ekko, dev_ekpo, dev_eket, dev_likp, dev_lips
   dev_silver        corresponding typed tables, dev_quarantine, dev_load_summary
   dev_gold_internal physical results and operational records; no employee access
@@ -20,7 +20,7 @@ The main Bundle references an existing catalog through `var.catalog`. A separate
 ## Deploy and run
 
 1. Follow BOOTSTRAP.md to deploy and run catalog initialisation before the first main deployment. Push the reviewed repository changes, including both Bundles, `data/source`, scripts and workflows. The repository root is `case_solution`; Actions use `databricks` as their bundle directory.
-2. Run **Deploy Databricks** for dev. It first checks that the catalog exists, then validates and deploys schemas, the Volume, jobs and notebooks, then verifies SHA-256 checksums and uploads the seven unchanged synthetic source CSV files. Deployment does not run the processing job.
+2. Run **Deploy Databricks** for dev. It first checks that the catalog exists, then validates and deploys schemas, the Volume, jobs and notebooks, The original CSV files are uploaded manually to the Workspace landing folder described below. Deployment does not run the processing job.
 3. Run **dev_supplier_performance** in Databricks. Tasks run Bronze, then Silver, then Gold. The daily 06:00 Europe/Berlin schedule stays paused.
 4. Run **Run Databricks review** or the review notebook. Choose a month with data and a branch code or ALL. Review PASS/CHECK output as well as job success.
 
@@ -73,3 +73,14 @@ Source: [Serverless usage policies](https://docs.databricks.com/aws/en/admin/usa
 - `compute_reduction_pct`: hypothetical reduction of compute costs, not a resource shutdown or guaranteed saving.
 
 The estimate uses time-matched list prices and keeps negative corrections. Missing prices are counted; quantities with different units are not combined. Contract discounts and separate cloud invoices are excluded. Warehouse ownership and run-as identity are distinct. No billing rows does not prove no cost. Billing and identity information require access controls separate from supplier reports.
+
+
+## Active Workspace Landing Zone (2026-10-11)
+
+The project owner uploaded the seven original CSV files to `/Workspace/Users/guochengcheng93@gmail.com/landing_zone_case_solution` and selected this folder as the active Landing Zone. The Bundle `source_path` variable and the processing job parameter now use that absolute path. Dev and prod currently share this read-only demonstration input; override source_path per target if separate inputs are needed.
+
+Bronze uses Python's CSV reader in the notebook process, then creates a Spark DataFrame with explicit STRING columns. This avoids relying on distributed Spark workers to access Workspace files. It preserves leading zeros, duplicate rows and whitespace; empty fields become null as before. All seven files are parsed before any Bronze table is replaced. README.txt is ignored. The input is a small snapshot held in memory, not a scalable large-file ingestion design. The job's execution identity must have read access to the folder.
+
+The deploy Action no longer checks or uploads repository CSV files. Therefore the Windows/Git line-ending checksum mismatch does not block deployment. The optional local checksum script and archived fixtures remain; their existing byte-level mismatch across checkouts is not silently redefined or claimed fixed. The previously deployed landing schema/Volume are retained and unused to avoid an unrelated destructive deployment; no new file copy is made there.
+
+After committing and pushing, rerun Deploy Databricks on the updated Git branch. Then run dev_supplier_performance. Existing manual source_path overrides must be cleared or changed to the Workspace path.

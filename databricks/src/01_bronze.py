@@ -1,15 +1,22 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # Bronze: Load SAP source files
-# MAGIC Store CSV fields as strings. Each run replaces the current table contents.
+# MAGIC Read the seven small CSV files from the configured Workspace landing folder.
+# MAGIC Store source fields as strings. Preserve duplicate records and leading zeros.
+# MAGIC Each run replaces the current table contents. The job identity needs read access to this folder.
+# MAGIC Files are parsed in notebook Python before transfer to Spark; this is intended for the small case-study snapshot.
 
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ## Parameters
 
 # COMMAND ----------
-from pyspark.sql import functions as F
+import csv
 import re
+from pathlib import Path
+
+from pyspark.sql import functions as F
+from pyspark.sql.types import StringType, StructField, StructType
 
 dbutils.widgets.text("table_prefix", "dev_", "Table prefix")
 table_prefix = dbutils.widgets.get("table_prefix").strip()
@@ -20,7 +27,7 @@ dbutils.widgets.text("catalog", "supplier_performance_dev", "Target catalog")
 dbutils.widgets.text("bronze_schema", "dev_bronze", "Target schema")
 dbutils.widgets.text(
     "source_path",
-    "/Volumes/supplier_performance_dev/dev_landing/dev_source_files",
+    "/Workspace/Users/guochengcheng93@gmail.com/landing_zone_case_solution",
     "Landing Zone",
 )
 
@@ -47,10 +54,39 @@ source_files = {
     "lips": "LIPS_DELIVERY_ITEM.csv",
 }
 
-available_files = {item.name: item.size for item in dbutils.fs.ls(source_path)}
-for file_name in source_files.values():
-    if available_files.get(file_name, 0) <= 0:
-        raise ValueError(f"Source file is missing or empty: {file_name}")
+landing_dir = Path(source_path)
+if not source_path.startswith("/Workspace/"):
+    raise ValueError("source_path must be an absolute /Workspace/ folder path.")
+if not landing_dir.is_dir():
+    raise ValueError(f"Landing folder is missing or not readable by the job identity: {source_path}")
+
+
+def read_source_csv(path):
+    """Read a small Workspace CSV locally, preserving strings and leading zeros."""
+    if not path.is_file() or path.stat().st_size == 0:
+        raise ValueError(f"Source file is missing or empty: {path.name}")
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.reader(handle, delimiter=";", quotechar='"', doublequote=True, strict=True)
+        header = next(reader, None)
+        if not header or any(not name for name in header) or len(header) != len(set(header)):
+            raise ValueError(f"Invalid or duplicate column names: {path.name}")
+        if any(name.startswith("_") for name in header):
+            raise ValueError(f"Source columns must not use reserved metadata names: {path.name}")
+        rows = []
+        for row in reader:
+            if not row:
+                continue
+            if len(row) != len(header):
+                raise ValueError(f"Wrong field count in {path.name}, line {reader.line_num}")
+            # Match the previous Bronze behaviour: empty CSV fields become null.
+            rows.append(tuple(value if value != "" else None for value in row))
+    return header, rows
+
+
+# Validate all seven source files before replacing any Bronze table.
+# README.txt and any unrelated files are ignored by the explicit source list.
+source_data = {name: read_source_csv(landing_dir / filename)
+               for name, filename in source_files.items()}
 
 # COMMAND ----------
 # MAGIC %md
@@ -59,22 +95,12 @@ for file_name in source_files.values():
 # COMMAND ----------
 results = []
 for source_table, file_name in source_files.items():
-    raw = (
-        spark.read
-        .option("header", "true")
-        .option("sep", ";")
-        .option("encoding", "UTF-8")
-        .option("inferSchema", "false")
-        .option("mode", "FAILFAST")
-        .option("quote", '"')
-        .option("escape", '"')
-        .csv(f"{source_path}/{file_name}")
-    )
-    bronze = raw.select(
-        "*",
-        F.col("_metadata.file_path").alias("_source_file"),
-        F.current_timestamp().alias("_loaded_at"),
-    )
+    header, rows = source_data[source_table]
+    schema = StructType([StructField(column, StringType(), True) for column in header])
+    # Workspace files are read by notebook Python, not by distributed Spark workers.
+    raw = spark.createDataFrame(rows, schema=schema)
+    bronze = (raw.withColumn("_source_file", F.lit(str(landing_dir / file_name)))
+              .withColumn("_loaded_at", F.current_timestamp()))
     table_name = ".".join(
         f"`{part.replace('`', '``')}`"
         for part in [catalog, bronze_schema, f"{table_prefix}{source_table}"]

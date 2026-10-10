@@ -8,7 +8,7 @@ For dev, the catalog is `supplier_performance_dev`; schemas are `dev_landing`, `
 
 | Layer | Purpose |
 |---|---|
-| Landing | Seven unchanged synthetic CSV files in `dev_landing.dev_source_files`. The repository contains checksummed copies for repeatable deployment. |
+| Landing | Seven original CSV files manually uploaded to `/Workspace/Users/guochengcheng93@gmail.com/landing_zone_case_solution`. The previously created landing Volume is retained but unused. |
 | Bronze | Source fields as strings, plus source file and load time. Keep source duplicates. |
 | Silver | Typed, validated records, quarantine and load reconciliation. Keep SAP field names for traceability. |
 | Internal Gold | Physical Delta results and operational datasets, with English column names. Restricted to the processing identity and administrators. |
@@ -106,3 +106,8 @@ All names below are prefixed with `dev_` in dev and published in `dev_gold`; phy
 ## Decision record discipline
 
 For each change record date, rule, observed evidence, decision, origin (`our interpretation`, `project-owner decision`, `open customer question`, or `customer-confirmed`) and impact. Record a customer confirmation only when an actual answer exists. Review quarantine before revising exclusions. Missing usable delivery evidence alone does not prove non-delivery.
+
+
+## Landing Zone decision (2026-10-11)
+
+Origin: explicit project-owner instruction. Use the uploaded Workspace folder as Bronze input. This is a confirmed technical path choice, not confirmation of business semantics or export completeness. The input parser reads semicolon-delimited UTF-8 (optional BOM), accepts quoted fields, keeps strings and duplicates, and maps empty fields to null. Malformed rows fail before Bronze writes. The seven expected CSV names are unchanged; other files are ignored. Pipeline loading does not validate against the repository's byte-level checksum manifest.
