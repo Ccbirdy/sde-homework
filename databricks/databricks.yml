@@ -19,8 +19,8 @@ variables:
   catalog:
     description: Dedicated project and environment catalog.
   storage_root:
-    description: Optional managed storage root; empty uses metastore managed storage.
-    default: ''
+    description: Managed storage root available to this workspace; override for another workspace.
+    default: s3://dbstorage-prod-2nmis/uc/22267b45-b153-4034-bc52-9b5477ee592a/1ea46a3d-fcee-43af-bee7-78a4af76c4f1
   branch_groups_json:
     description: JSON mapping of branch codes to existing account groups. Empty denies branch access.
     default: '{}'

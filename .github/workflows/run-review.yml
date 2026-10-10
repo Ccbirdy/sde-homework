@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: Databricks-Ziel
+        description: Databricks target
         type: choice
         required: true
         default: dev
@@ -13,22 +13,22 @@ on:
           - dev
           - prod
       report_month:
-        description: Berichtsmonat (yyyy-MM-01)
+        description: Report month (yyyy-MM-01)
         type: string
         required: true
         default: '2026-09-01'
       branch_code:
-        description: Niederlassung (WERKS-Code oder ALL, kein Git-Branch)
+        description: Branch code or ALL (not a Git branch)
         type: string
         required: true
         default: ALL
       po_number:
-        description: Optionaler Filter auf Bestellnummer
+        description: Optional purchase order ID
         type: string
         required: false
         default: ''
       po_item:
-        description: Optionale Bestellposition mit führenden Nullen
+        description: Optional order item ID with leading zeros
         type: string
         required: false
         default: ''
@@ -36,7 +36,7 @@ on:
 permissions:
   contents: read
 
-# Gleiche Gruppe wie beim Deployment: kein gleichzeitiges Deploy und Review über diese Actions.
+# Serialize deployment and review for the same target.
 concurrency:
   group: databricks-supplier-performance-${{ inputs.target }}
   cancel-in-progress: false
@@ -65,8 +65,8 @@ jobs:
           BRANCH_CODE: ${{ inputs.branch_code }}
           PO_NUMBER: ${{ inputs.po_number }}
           PO_ITEM: ${{ inputs.po_item }}
-        # Startet den bereits bereitgestellten Job und wartet auf dessen Ergebnis.
-        # Der ausgewählte Git-Branch liefert die Bundle-Konfiguration, keinen neuen Deployment-Stand.
+        # Run the already deployed job and wait for its result.
+        # The selected Git branch supplies bundle configuration, not a new deployed notebook version.
         run: |
           databricks bundle run -t "$BUNDLE_TARGET" supplier_performance_review -- \
             --report_month="$REPORT_MONTH" \
