@@ -2,22 +2,54 @@ resources:
   jobs:
     supplier_performance:
       name: supplier_performance
+      tags:
+        project: supplier_performance
+        environment: ${bundle.target}
+        cost_center: ${var.cost_center}
+      # Bind budget_policy_id only after an administrator creates a serverless usage policy.
       max_concurrent_runs: 1
-      # Optional: täglich um 06:00 Uhr in Berlin. Derzeit nicht aktiviert.
-      # schedule:
-      #   quartz_cron_expression: '0 0 6 * * ?'
-      #   timezone_id: Europe/Berlin
-      #   pause_status: PAUSED
-      # Monatliche Alternative: '0 0 6 1 * ?' (am 1. des Monats).
+      schedule:
+        quartz_cron_expression: '0 0 6 * * ?'
+        timezone_id: Europe/Berlin
+        pause_status: PAUSED
       parameters:
         - name: catalog
           default: ${var.catalog}
-        - name: schema_name
-          default: ${resources.schemas.project_schema.name}
+        - name: table_prefix
+          default: ${bundle.target}_
+        - name: gold_schema
+          default: ${resources.schemas.gold_schema.name}
+        - name: bronze_schema
+          default: ${resources.schemas.bronze_schema.name}
+        - name: silver_schema
+          default: ${resources.schemas.silver_schema.name}
+        - name: gold_internal_schema
+          default: ${resources.schemas.gold_internal_schema.name}
         - name: source_path
-          default: ${resources.volumes.source_files.volume_path}
+          default: ${resources.volumes.landing_files.volume_path}
+        - name: branch_groups_json
+          default: ${var.branch_groups_json}
+        - name: central_group
+          default: ${var.central_group}
+        # Demo assumptions, not confirmed business rules.
+        - name: as_of_date
+          default: '2026-09-30'
+        - name: min_items
+          default: '1'
       tasks:
         - task_key: bronze
           notebook_task:
             notebook_path: ../src/01_bronze.py
+            source: WORKSPACE
+        - task_key: silver
+          depends_on:
+            - task_key: bronze
+          notebook_task:
+            notebook_path: ../src/02_silver.py
+            source: WORKSPACE
+        - task_key: gold
+          depends_on:
+            - task_key: silver
+          notebook_task:
+            notebook_path: ../src/03_gold.py
             source: WORKSPACE

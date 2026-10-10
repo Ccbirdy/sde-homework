@@ -1,34 +1,40 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Bronze: SAP-Dateien laden
-# MAGIC CSV-Dateien aus der Landing Zone als Zeichenketten speichern. Jeder Lauf ersetzt den aktuellen Tabelleninhalt.
+# MAGIC # Bronze: Load SAP source files
+# MAGIC Store CSV fields as strings. Each run replaces the current table contents.
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Parameter
+# MAGIC ## Parameters
 
 # COMMAND ----------
 from pyspark.sql import functions as F
+import re
 
-dbutils.widgets.text("catalog", "workspace", "Zielkatalog")
-dbutils.widgets.text("schema_name", "supplier_performance_dev", "Zielschema")
+dbutils.widgets.text("table_prefix", "dev_", "Table prefix")
+table_prefix = dbutils.widgets.get("table_prefix").strip()
+if not re.fullmatch(r"[a-z][a-z0-9_]*_", table_prefix):
+    raise ValueError("Use a table prefix such as dev_ or prod_.")
+
+dbutils.widgets.text("catalog", "supplier_performance_dev", "Target catalog")
+dbutils.widgets.text("bronze_schema", "dev_bronze", "Target schema")
 dbutils.widgets.text(
     "source_path",
-    "/Volumes/workspace/supplier_performance_dev/source_files",
+    "/Volumes/supplier_performance_dev/dev_landing/dev_source_files",
     "Landing Zone",
 )
 
 # COMMAND ----------
 catalog = dbutils.widgets.get("catalog").strip()
-schema_name = dbutils.widgets.get("schema_name").strip()
+bronze_schema = dbutils.widgets.get("bronze_schema").strip()
 source_path = dbutils.widgets.get("source_path").strip().rstrip("/")
 
-if not all([catalog, schema_name, source_path]):
-    raise ValueError("catalog, schema_name und source_path müssen gesetzt sein.")
+if not all([catalog, bronze_schema, source_path]):
+    raise ValueError("Set catalog, bronze_schema and source_path.")
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Quelldateien
+# MAGIC ## Source files
 
 # COMMAND ----------
 source_files = {
@@ -44,11 +50,11 @@ source_files = {
 available_files = {item.name: item.size for item in dbutils.fs.ls(source_path)}
 for file_name in source_files.values():
     if available_files.get(file_name, 0) <= 0:
-        raise ValueError(f"Quelldatei fehlt oder ist leer: {file_name}")
+        raise ValueError(f"Source file is missing or empty: {file_name}")
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Daten laden und speichern
+# MAGIC ## Load and save data
 
 # COMMAND ----------
 results = []
@@ -71,14 +77,14 @@ for source_table, file_name in source_files.items():
     )
     table_name = ".".join(
         f"`{part.replace('`', '``')}`"
-        for part in [catalog, schema_name, f"bronze_{source_table}"]
+        for part in [catalog, bronze_schema, f"{table_prefix}{source_table}"]
     )
     bronze.write.format("delta").mode("overwrite").saveAsTable(table_name)
-    results.append((f"bronze_{source_table}", spark.table(table_name).count()))
+    results.append((f"{table_prefix}{source_table}", spark.table(table_name).count()))
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Ergebnis
+# MAGIC ## Results
 
 # COMMAND ----------
 display(spark.createDataFrame(results, "table_name STRING, row_count LONG"))

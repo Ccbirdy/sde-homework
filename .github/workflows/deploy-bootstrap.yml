@@ -1,0 +1,44 @@
+name: Deploy Databricks bootstrap
+run-name: Deploy bootstrap ${{ inputs.target }} from ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Environment to initialise
+        type: choice
+        required: true
+        default: dev
+        options:
+          - dev
+          - prod
+
+permissions:
+  contents: read
+
+concurrency:
+  group: databricks-supplier-performance-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@main
+        with:
+          version: '1.20.0'
+      - name: Validate and deploy bootstrap only
+        working-directory: databricks-bootstrap
+        env:
+          DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          DATABRICKS_AUTH_TYPE: pat
+          BUNDLE_TARGET: ${{ inputs.target }}
+        run: |
+          databricks bundle validate -t "$BUNDLE_TARGET"
+          databricks bundle deploy -t "$BUNDLE_TARGET"
+      # The project owner starts the deployed job in Databricks.
+      # Deployment alone does not execute SQL or create a catalog.

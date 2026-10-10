@@ -1,5 +1,6 @@
 bundle:
   name: supplier_performance
+  engine: direct
 
 experimental:
   skip_name_prefix_for_schema: true
@@ -8,13 +9,22 @@ include:
   - resources/schema.yml
   - resources/volume.yml
   - resources/supplier_performance.job.yml
+  - resources/supplier_performance_review.job.yml
 
 variables:
+  cost_center:
+    description: Project cost centre.
+    default: supplier_analytics
   catalog:
-    default: workspace
-  schema_name:
-    description: Schema für das jeweilige Deployment-Ziel.
+    description: Existing project catalog initialised by the separate SQL bootstrap job.
+  branch_groups_json:
+    description: JSON mapping of branch codes to existing account groups. Empty denies branch access.
+    default: '{}'
+  central_group:
+    description: Optional existing account group allowed to read all Gold results.
+    default: ''
 
+# No broad catalog or schema SELECT grants. Access is published by the Gold task.
 targets:
   dev:
     default: true
@@ -24,13 +34,13 @@ targets:
       tags:
         dev: "dev"
     variables:
-      schema_name: supplier_performance_dev
-
+      catalog: supplier_performance_dev
   prod:
     mode: production
     presets:
       name_prefix: "prod_"
+      trigger_pause_status: PAUSED
     variables:
-      schema_name: supplier_performance_prod
+      catalog: supplier_performance_prod
     workspace:
       root_path: /Workspace/Users/guochengcheng93@gmail.com/.bundle/${bundle.name}/${bundle.target}

@@ -1,0 +1,75 @@
+name: Run Databricks review
+run-name: Review ${{ inputs.target }} / ${{ inputs.report_month }} / ${{ inputs.branch_code }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Databricks target
+        type: choice
+        required: true
+        default: dev
+        options:
+          - dev
+          - prod
+      report_month:
+        description: Report month (yyyy-MM-01)
+        type: string
+        required: true
+        default: '2026-09-01'
+      branch_code:
+        description: Branch code or ALL (not a Git branch)
+        type: string
+        required: true
+        default: ALL
+      po_number:
+        description: Optional purchase order ID
+        type: string
+        required: false
+        default: ''
+      po_item:
+        description: Optional order item ID with leading zeros
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+# Serialize deployment and review for the same target.
+concurrency:
+  group: databricks-supplier-performance-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@main
+        with:
+          version: '1.20.0'
+
+      - name: Run review job
+        working-directory: databricks
+        env:
+          DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          DATABRICKS_AUTH_TYPE: pat
+          BUNDLE_TARGET: ${{ inputs.target }}
+          REPORT_MONTH: ${{ inputs.report_month }}
+          BRANCH_CODE: ${{ inputs.branch_code }}
+          PO_NUMBER: ${{ inputs.po_number }}
+          PO_ITEM: ${{ inputs.po_item }}
+        # Run the already deployed job and wait for its result.
+        # The selected Git branch supplies bundle configuration, not a new deployed notebook version.
+        run: |
+          databricks bundle run -t "$BUNDLE_TARGET" supplier_performance_review -- \
+            --report_month="$REPORT_MONTH" \
+            --branch="$BRANCH_CODE" \
+            --po_number="$PO_NUMBER" \
+            --po_item="$PO_ITEM"

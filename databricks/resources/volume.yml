@@ -1,10 +1,10 @@
 resources:
   volumes:
-    source_files:
-      name: source_files
+    landing_files:
+      name: ${bundle.target}_source_files
       catalog_name: ${var.catalog}
-      schema_name: ${resources.schemas.project_schema.name}
+      schema_name: ${resources.schemas.landing_schema.name}
       volume_type: MANAGED
-      comment: Unveränderte CSV-Quelldateien (${bundle.target}).
+      comment: Unchanged source CSV files (${bundle.target}).
       lifecycle:
         prevent_destroy: true
