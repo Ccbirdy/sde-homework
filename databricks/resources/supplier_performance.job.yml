@@ -26,7 +26,7 @@ resources:
         - name: gold_internal_schema
           default: ${resources.schemas.gold_internal_schema.name}
         - name: source_path
-          default: ${resources.volumes.landing_files.volume_path}
+          default: ${var.source_path}
         - name: branch_groups_json
           default: ${var.branch_groups_json}
         - name: central_group

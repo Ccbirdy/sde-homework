@@ -17,6 +17,9 @@ variables:
     default: supplier_analytics
   catalog:
     description: Existing project catalog initialised by the separate SQL bootstrap job.
+  source_path:
+    description: Workspace folder containing the seven original source CSV files.
+    default: /Workspace/Users/guochengcheng93@gmail.com/landing_zone_case_solution
   branch_groups_json:
     description: JSON mapping of branch codes to existing account groups. Empty denies branch access.
     default: '{}'
