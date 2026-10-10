@@ -1,44 +1,95 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Gold: Monatliche Lieferantenperformance
-# MAGIC Eine Bewertung je Bestellposition. Der letzte Einteilungstermin bestimmt den Monat.
-# MAGIC - Pünktlich: bis zu diesem Termin vollständig geliefert.
-# MAGIC - Vollständig: bis Monatsende geliefert.
-# MAGIC Annahmen und Grenzen stehen in DATA_RULES.md. Einzelne Teiltermine werden nicht bewertet.
+# MAGIC # Gold: Monthly supplier performance
+# MAGIC Evaluate one purchase order item at a time. The final scheduled date determines the month.
+# MAGIC On time means fully delivered by that date. In full means fully delivered by month end.
+# MAGIC See DATA_RULES.md for assumptions. Individual schedule lines are not scored separately.
 
 # COMMAND ----------
 from datetime import date
+import json
+import re
 
 from pyspark.sql import Window
 from pyspark.sql import functions as F
 
-dbutils.widgets.text("catalog", "workspace", "Zielkatalog")
-dbutils.widgets.text("schema_name", "supplier_performance_dev", "Zielschema")
-dbutils.widgets.text("as_of_date", "2026-09-30", "Statistikstichtag (Annahme, yyyy-MM-dd)")
-dbutils.widgets.text("min_items", "1", "Mindestens bewertbare Positionen für das Ranking")
+dbutils.widgets.text("catalog", "supplier_performance_dev", "Target catalog")
+for key, default in [("bronze_schema", "dev_bronze"), ("silver_schema", "dev_silver"),
+                     ("gold_internal_schema", "dev_gold_internal"), ("gold_schema", "dev_gold"),
+                     ("table_prefix", "dev_"), ("branch_groups_json", "{}"), ("central_group", "")]:
+    dbutils.widgets.text(key, default, key.replace("_", " ").title())
+dbutils.widgets.text("as_of_date", "2026-09-30", "Evaluation cutoff (assumption, yyyy-MM-dd)")
+dbutils.widgets.text("min_items", "1", "Minimum evaluated order items for ranking")
 
 catalog = dbutils.widgets.get("catalog").strip()
-schema_name = dbutils.widgets.get("schema_name").strip()
+layer_schemas = {layer: dbutils.widgets.get(layer + "_schema").strip()
+                 for layer in ["bronze", "silver", "gold_internal", "gold"]}
+table_prefix = dbutils.widgets.get("table_prefix").strip()
+branch_groups = json.loads(dbutils.widgets.get("branch_groups_json"))
+central_group = dbutils.widgets.get("central_group").strip()
+if not isinstance(branch_groups, dict) or any(
+    not isinstance(branch, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", branch)
+    or not isinstance(group, str) or not group.strip() for branch, group in branch_groups.items()
+):
+    raise ValueError("branch_groups_json must map branch codes to non-empty account group names.")
+if len(set(branch_groups.values())) != len(branch_groups):
+    raise ValueError("Use a separate account group for each branch.")
+if central_group and central_group in branch_groups.values():
+    raise ValueError("The central group must not also be a branch group.")
 as_of_date = dbutils.widgets.get("as_of_date").strip()
 if date.fromisoformat(as_of_date).isoformat() != as_of_date:
-    raise ValueError("as_of_date muss das Format yyyy-MM-dd haben.")
+    raise ValueError("as_of_date must use yyyy-MM-dd.")
 min_items = int(dbutils.widgets.get("min_items"))
-if not catalog or not schema_name or min_items < 1:
-    raise ValueError("Katalog und Schema setzen; min_items muss mindestens 1 sein.")
+if not catalog or not all(layer_schemas.values()) or not table_prefix or min_items < 1:
+    raise ValueError("Set catalog and schemas; min_items must be at least 1.")
+
+
+def quoted(value):
+    return "`" + value.replace("`", "``") + "`"
 
 
 def table_path(name):
-    return ".".join(f"`{part.replace('`', '``')}`" for part in [catalog, schema_name, name])
+    layer, suffix = name.split("_", 1)
+    return ".".join(map(quoted, [catalog, layer_schemas[layer], table_prefix + suffix]))
 
 
 def read(name):
     return spark.table(table_path(name))
 
 
+# SAP identifiers stay in Bronze/Silver. Gold has a stable English business vocabulary.
+column_names = {
+    "MANDT": "sap_client_id", "EBELN": "purchase_order_id", "EBELP": "purchase_order_item_id",
+    "LIFNR": "supplier_id", "NAME1": "supplier_name", "WERKS": "branch_code",
+    "MATNR": "material_id", "MEINS": "quantity_unit", "BEDAT": "order_date",
+    "VBELN": "delivery_id", "POSNR": "delivery_item_id", "WADAT_IST": "actual_delivery_date",
+    "LFIMG": "delivered_quantity", "MENGE": "ordered_quantity", "TXZ01": "item_description",
+    "NETPR": "net_unit_price", "NETWR": "net_order_value", "WAERS": "currency_code",
+    "ETENR": "schedule_line_id", "EINDT": "scheduled_delivery_date", "WEMNG": "recorded_received_quantity",
+    "_is_deleted": "is_deleted", "candidate_items": "candidate_order_item_count",
+    "evaluated_items": "evaluated_order_item_count", "excluded_items": "excluded_order_item_count",
+    "scope": "report_scope", "coverage_rate": "evaluation_coverage_rate",
+    "score": "performance_score", "min_items": "minimum_order_item_count",
+    "ranking_eligible": "is_ranking_eligible", "worst_rank": "worst_supplier_rank",
+    "ordered_qty": "ordered_quantity", "scheduled_qty": "scheduled_quantity",
+    "schedule_count": "schedule_line_count", "delivered_by_due_qty": "delivered_by_due_quantity",
+    "delivered_by_month_end_qty": "delivered_by_month_end_quantity", "shortfall_qty": "shortfall_quantity",
+    "first_due_date": "first_scheduled_delivery_date", "final_due_date": "final_scheduled_delivery_date",
+    "evaluation_date": "evaluation_month_end", "on_time": "is_on_time", "in_full": "is_in_full",
+    "fill_rate": "quantity_fill_rate", "mean_fill_rate": "mean_quantity_fill_rate",
+    "by_due_date": "is_by_due_date", "by_month_end": "is_by_month_end", "after_cutoff": "is_after_cutoff",
+}
+published = []
+
+
 def save(frame, name):
-    (frame.withColumn("_as_of_date", F.lit(as_of_date).cast("date"))
-     .withColumn("_processed_at", F.current_timestamp())
-     .write.format("delta").mode("overwrite").saveAsTable(table_path(name)))
+    suffix = name.removeprefix("gold_")
+    target = ".".join(map(quoted, [catalog, layer_schemas["gold_internal"], table_prefix + suffix]))
+    business = frame.select(*[F.col(c).alias(column_names.get(c, c)) for c in frame.columns])
+    (business.withColumn("as_of_date", F.lit(as_of_date).cast("date"))
+     .withColumn("processed_at", F.current_timestamp())
+     .write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(target))
+    published.append((suffix, target, business.columns))
 
 
 keys = ["MANDT", "EBELN", "EBELP"]
@@ -47,9 +98,9 @@ empty_reasons = F.array().cast("array<string>")
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Grundmenge und Qualitätsgrenzen
-# MAGIC Auch ausgeschlossene Bestellpositionen bleiben sichtbar. Bronze liefert nur die Schlüssel.
-# MAGIC Quarantänedaten liefern Ausschlussgründe, keine Mengen für die Bewertung.
+# MAGIC ## Population and quality limits
+# MAGIC Excluded order items remain visible. Bronze supplies keys only.
+# MAGIC Quarantine supplies exclusion reasons, not quantities for scoring.
 
 # COMMAND ----------
 base = read("bronze_ekpo").select(*[
@@ -71,7 +122,7 @@ mapped = affected.join(base, keys, "left_semi")
 issues = mapped.groupBy(*keys).agg(
     F.sort_array(F.collect_set("source_table")).alias("quarantined_sources")
 )
-# Nicht zuordenbare Einteilungen/Lieferungen werden separat ausgewiesen.
+# Report unassigned schedules and deliveries separately.
 unassigned = affected.join(base, keys, "left_anti")
 
 schedules = read("silver_eket").groupBy(*keys).agg(
@@ -90,9 +141,9 @@ details = (details.withColumn("report_month", F.trunc("final_due_date", "month")
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Lieferbelege und Mengen
-# MAGIC Einteilungen werden zuerst je Bestellposition zusammengefasst. So vervielfacht der Join keine Mengen.
-# MAGIC WADAT_IST und LFIMG dienen vorläufig als tatsächliches Lieferdatum und Liefermenge.
+# MAGIC ## Delivery evidence and quantities
+# MAGIC Aggregate schedules before joining to avoid multiplying quantities.
+# MAGIC WADAT_IST and LFIMG are provisional delivery date and quantity fields.
 
 # COMMAND ----------
 deliveries = (read("silver_lips").select(
@@ -151,10 +202,10 @@ details = (details
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Monatskennzahlen und Rangliste
-# MAGIC Jede bewertbare Bestellposition hat dasselbe Gewicht. Keine Summe verschiedener Mengeneinheiten.
-# MAGIC Score = Mittelwert aus Pünktlichkeitsquote und Vollständigkeitsquote. Niedrige Werte sind schlechter.
-# MAGIC ALL umfasst alle Niederlassungen; BRANCH enthält Kennzahlen je WERKS.
+# MAGIC ## Monthly metrics and ranking
+# MAGIC Each evaluable order item has equal weight. Do not add quantities across different units.
+# MAGIC Score is the mean of the on-time and in-full rates. Lower values are worse.
+# MAGIC ALL covers the company; BRANCH calculates each branch separately.
 
 # COMMAND ----------
 monthly_base = details.filter(
@@ -185,9 +236,9 @@ worst_three = ranking.filter(F.col("worst_rank") <= 3)
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Ergebnisse speichern
-# MAGIC Ausgaben ersetzen den bisherigen Gold-Stand. Fehler beim Schreiben können Teilstände hinterlassen.
-# MAGIC Unbekannte Lieferungen und fehlende Termine begrenzen die Aussagekraft; siehe Qualitätsübersicht.
+# MAGIC ## Save results
+# MAGIC Outputs replace the previous internal Gold snapshot. Partial writes are possible on failure.
+# MAGIC Unassigned deliveries and missing schedules limit conclusions; inspect quality results.
 
 # COMMAND ----------
 quality = details.select(F.explode(F.when(F.col("is_evaluable"), F.array(F.lit("EVALUATED")))
@@ -207,4 +258,67 @@ save(quality, "gold_quality_summary")
 save(unassigned, "gold_unassigned_quarantine")
 
 display(quality.orderBy("reason"))
-display(worst_three.filter(F.col("scope") == "ALL").orderBy("report_month", "worst_rank"))
+display(worst_three.filter(F.col("scope") == "ALL").orderBy("report_month", "worst_rank")
+        .select(*[F.col(c).alias(column_names.get(c, c)) for c in worst_three.columns]))
+
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## Operational data for branch employees
+# MAGIC Purchase order items include deleted items with a flag. Delivery items include all valid Silver deliveries.
+# MAGIC Schedule lines stay separate to avoid multiplying order and delivery quantities.
+# MAGIC These datasets include open and future orders. Performance exclusions do not remove operational records.
+
+# COMMAND ----------
+purchase_order_items = (read("silver_ekpo").select(
+    *keys, "MATNR", "TXZ01", "WERKS", "MENGE", "MEINS", "NETPR", "NETWR", "_is_deleted"
+).join(read("silver_ekko").select("MANDT", "EBELN", "LIFNR", "BEDAT", "WAERS"),
+       ["MANDT", "EBELN"], "inner").join(vendors, "LIFNR", "left"))
+save(purchase_order_items, "gold_purchase_order_items")
+operational_deliveries = (deliveries.join(
+    purchase_order_items.select(*keys, "LIFNR", "NAME1", "BEDAT", "TXZ01"), keys, "left"))
+save(operational_deliveries, "gold_delivery_items")
+schedule_lines = (read("silver_eket").select(
+    *keys, "ETENR", "EINDT", F.col("MENGE").alias("scheduled_quantity"), "WEMNG"
+).join(purchase_order_items.select(*keys, "LIFNR", "NAME1", "WERKS", "MATNR", "MEINS"),
+       keys, "inner"))
+save(schedule_lines, "gold_schedule_lines")
+
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## Publish protected Gold views
+# MAGIC Employees query views as their own identity. Only their account group grants branch access.
+# MAGIC ALL rows and unassigned quality records are restricted to the publisher and the optional central group.
+# MAGIC Never grant branch users SELECT on internal Gold, Bronze or Silver, or permission to run owner jobs.
+# MAGIC Empty group configuration keeps access closed. Administrative owners can still manage the data.
+
+# COMMAND ----------
+def sql_literal(value):
+    return "'" + value.replace("\\", "\\\\").replace("'", "''") + "'"
+
+
+publisher = spark.sql("SELECT session_user() AS user_name").first().user_name
+central_predicate = "session_user() = " + sql_literal(publisher)
+if central_group:
+    central_predicate += " OR is_account_group_member(" + sql_literal(central_group) + ")"
+branch_predicate = " OR ".join(
+    "(branch_code = " + sql_literal(branch) + " AND is_account_group_member(" + sql_literal(group) + "))"
+    for branch, group in sorted(branch_groups.items())
+) or "FALSE"
+for suffix, source, columns in published:
+    predicate = central_predicate
+    if "branch_code" in columns:
+        branch_condition = "(" + branch_predicate + ")"
+        if "report_scope" in columns:
+            branch_condition = "report_scope = 'BRANCH' AND " + branch_condition
+        predicate += " OR (" + branch_condition + ")"
+    target = table_path("gold_" + suffix)
+    projection = ", ".join(map(quoted, columns + ["as_of_date", "processed_at"]))
+    spark.sql(f"CREATE OR REPLACE VIEW {target} AS SELECT {projection} FROM {source} WHERE {predicate}")
+    readers = set(branch_groups.values()) if "branch_code" in columns else set()
+    if central_group:
+        readers.add(central_group)
+    for group in sorted(readers):
+        spark.sql(f"GRANT USE CATALOG ON CATALOG {quoted(catalog)} TO {quoted(group)}")
+        spark.sql(f"GRANT USE SCHEMA ON SCHEMA {quoted(catalog)}.{quoted(layer_schemas['gold'])} TO {quoted(group)}")
+        spark.sql(f"GRANT SELECT ON VIEW {target} TO {quoted(group)}")
+print("Published English Gold views. Configured branch groups:", len(branch_groups))

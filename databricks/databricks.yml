@@ -1,10 +1,12 @@
 bundle:
   name: supplier_performance
+  engine: direct
 
 experimental:
   skip_name_prefix_for_schema: true
 
 include:
+  - resources/catalog.yml
   - resources/schema.yml
   - resources/volume.yml
   - resources/supplier_performance.job.yml
@@ -12,17 +14,21 @@ include:
 
 variables:
   cost_center:
-    description: Kostenstelle für die Zuordnung des Projekts.
+    description: Project cost centre.
     default: supplier_analytics
-  # Nach Erstellung einer Serverless usage policy aktivieren.
-  # serverless_usage_policy_id:
-  #   description: ID der bestehenden Policy im jeweiligen Ziel.
-  #   default: '<policy-id>'
   catalog:
-    default: workspace
-  schema_name:
-    description: Schema für das jeweilige Deployment-Ziel.
+    description: Dedicated project and environment catalog.
+  storage_root:
+    description: Optional managed storage root; empty uses metastore managed storage.
+    default: ''
+  branch_groups_json:
+    description: JSON mapping of branch codes to existing account groups. Empty denies branch access.
+    default: '{}'
+  central_group:
+    description: Optional existing account group allowed to read all Gold results.
+    default: ''
 
+# No broad catalog or schema SELECT grants. Access is published by the Gold task.
 targets:
   dev:
     default: true
@@ -32,13 +38,13 @@ targets:
       tags:
         dev: "dev"
     variables:
-      schema_name: supplier_performance_dev
-
+      catalog: supplier_performance_dev
   prod:
     mode: production
     presets:
       name_prefix: "prod_"
+      trigger_pause_status: PAUSED
     variables:
-      schema_name: supplier_performance_prod
+      catalog: supplier_performance_prod
     workspace:
       root_path: /Workspace/Users/guochengcheng93@gmail.com/.bundle/${bundle.name}/${bundle.target}

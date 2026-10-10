@@ -1,0 +1,8 @@
+resources:
+  catalogs:
+    project_catalog:
+      name: ${var.catalog}
+      comment: Supplier performance project (${bundle.target}).
+      storage_root: ${var.storage_root}
+      lifecycle:
+        prevent_destroy: true

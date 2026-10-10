@@ -8,13 +8,14 @@ resources:
         environment: ${bundle.target}
         cost_center: ${var.cost_center}
         purpose: result_review
-      # Nach Einrichtung derselben Serverless usage policy wie im Hauptjob aktivieren.
-      # budget_policy_id: ${var.serverless_usage_policy_id}
+      # This administrative review job runs as its owner. Do not grant employees job-run access.
       parameters:
         - name: catalog
-          default: ${var.catalog}
-        - name: schema_name
-          default: ${resources.schemas.project_schema.name}
+          default: ${resources.catalogs.project_catalog.name}
+        - name: table_prefix
+          default: ${bundle.target}_
+        - name: gold_schema
+          default: ${resources.schemas.gold_schema.name}
         - name: report_month
           default: '2026-09-01'
         - name: branch

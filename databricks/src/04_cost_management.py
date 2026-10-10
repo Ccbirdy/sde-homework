@@ -1,25 +1,25 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Kostenübersicht und Budget-Simulation
-# MAGIC `demo` nutzt erfundene Nutzungsdaten und Preise. `live` liest die Databricks-Abrechnung.
-# MAGIC Die Übersicht zeigt Listenpreis-Schätzungen, keine Rechnung und keine CPU-Auslastung.
-# MAGIC Sie beendet keine Ressourcen. Auch das Ausführen dieses Notebooks kann Compute-Kosten verursachen.
-# MAGIC Für `live`: USE CATALOG auf system, USE SCHEMA auf system.billing und SELECT auf usage/list_prices.
+# MAGIC # Cost overview and budget simulation
+# MAGIC `demo` uses synthetic usage and prices. `live` reads Databricks billing.
+# MAGIC This is a list-price estimate, not an invoice or a CPU utilisation report.
+# MAGIC It does not stop resources. Running this notebook can incur compute costs.
+# MAGIC Live mode requires USE CATALOG on system, USE SCHEMA on system.billing and SELECT on usage/list_prices.
 
 # COMMAND ----------
 from datetime import date, timedelta
 from decimal import Decimal
 from html import escape
 
-dbutils.widgets.dropdown("data_mode", "demo", ["demo", "live"], "Datenquelle")
-dbutils.widgets.text("start_date", date.today().replace(day=1).isoformat(), "Von (inklusive)")
-dbutils.widgets.text("end_date", date.today().isoformat(), "Bis (inklusive)")
+dbutils.widgets.dropdown("data_mode", "demo", ["demo", "live"], "Data source")
+dbutils.widgets.text("start_date", date.today().replace(day=1).isoformat(), "Start date (inclusive)")
+dbutils.widgets.text("end_date", date.today().isoformat(), "End date (inclusive)")
 dbutils.widgets.text("workspace_id", "7474656502315766", "Workspace-ID")
-dbutils.widgets.text("project", "supplier_performance", "Projekt-Tag (leer: kein Tag-Filter)")
-dbutils.widgets.text("job_id", "972797289096916", "Zusätzliche Job-ID ohne Projekt-Tag")
-dbutils.widgets.text("currency", "USD", "Währung der Listenpreise")
-dbutils.widgets.text("period_budget", "100", "Budget für den gesamten Zeitraum")
-dbutils.widgets.text("compute_reduction_pct", "20", "Simulation: weniger Compute-Kosten in %")
+dbutils.widgets.text("project", "supplier_performance", "Project tag (empty: no tag filter)")
+dbutils.widgets.text("job_id", "972797289096916", "Additional job ID without project tag")
+dbutils.widgets.text("currency", "USD", "List-price currency")
+dbutils.widgets.text("period_budget", "100", "Budget for the full period")
+dbutils.widgets.text("compute_reduction_pct", "20", "Scenario: compute cost reduction (%)")
 
 params = {key: dbutils.widgets.get(key).strip() for key in [
     "data_mode", "start_date", "end_date", "workspace_id", "project", "job_id", "currency"
@@ -29,23 +29,23 @@ end = date.fromisoformat(params["end_date"])
 budget = Decimal(dbutils.widgets.get("period_budget").strip())
 reduction = Decimal(dbutils.widgets.get("compute_reduction_pct").strip())
 if end < start or (end - start).days > 365:
-    raise ValueError("Zeitraum muss zwischen 1 und 366 Tagen liegen.")
+    raise ValueError("Select a period between 1 and 366 days.")
 if not budget.is_finite() or budget <= 0 or not reduction.is_finite() or not 0 <= reduction <= 100:
-    raise ValueError("Budget muss positiv sein; Reduktion muss zwischen 0 und 100 liegen.")
+    raise ValueError("Budget must be positive; reduction must be between 0 and 100.")
 if not params["workspace_id"] or not params["currency"]:
-    raise ValueError("Workspace-ID und Währung müssen gesetzt sein.")
+    raise ValueError("Set workspace ID and currency.")
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Abfrage für echte Abrechnungsdaten
-# MAGIC `run_as` ist die Ausführungsidentität, nicht zwingend die Person, die Run now angeklickt hat.
-# MAGIC SQL-Warehouse-Besitzer stehen getrennt unter `warehouse_owner`; sie sind nicht automatisch Abfragebenutzer.
-# MAGIC Korrekturen bleiben enthalten: negative RETRACTION-Mengen gleichen frühere Buchungen aus.
-# MAGIC Der Preis muss zum SKU, zur Cloud, Einheit, Währung und zum Nutzungszeitraum passen.
+# MAGIC ## Query live billing data
+# MAGIC `run_as` is the execution identity, which can differ from the person starting a run.
+# MAGIC Warehouse owners are reported separately; they are not necessarily query users.
+# MAGIC Negative RETRACTION quantities reverse earlier billing records.
+# MAGIC Prices must match SKU, cloud, unit, currency and usage period.
 
 # COMMAND ----------
-# Diese SQL-Abfrage kann auch in ein SQL-Notebook oder einen Dashboard-Datensatz kopiert werden.
-# Benötigte Parameter: start_date, end_date, workspace_id, project, job_id, currency.
+# This query can also be used in a SQL notebook or dashboard dataset.
+# Required parameters: start_date, end_date, workspace_id, project, job_id, currency.
 LIVE_SQL = """
 WITH selected_usage AS (
   SELECT * FROM system.billing.usage
@@ -91,7 +91,7 @@ if params["data_mode"] == "live":
     usage = spark.sql(LIVE_SQL, args={k: v for k, v in params.items() if k != "data_mode"})
     usage.createOrReplaceTempView("cost_usage")
 else:
-    # Nur Beispieldaten. Preise und Identitäten sind erfunden, keine aktuellen Databricks-Tarife.
+    # Synthetic examples only. Prices and identities are invented, not current Databricks rates.
     demo_rows = []
     for offset in range((end - start).days + 1):
         day = start + timedelta(days=offset)
@@ -126,8 +126,8 @@ else:
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ## Dashboard
-# MAGIC Budget gilt für den gewählten Zeitraum. Die Simulation reduziert nur den geschätzten Compute-Anteil.
-# MAGIC Fehlende Preise ergeben eine unvollständige Kostensumme, keinen kostenlosen Verbrauch.
+# MAGIC The budget covers the selected period. The scenario reduces only the estimated compute portion.
+# MAGIC Missing prices mean an incomplete cost total, not free usage.
 
 # COMMAND ----------
 summary = spark.sql("""
@@ -144,10 +144,10 @@ known_cost = Decimal(summary.priced_cost or 0)
 compute_cost = Decimal(summary.compute_cost or 0)
 scenario_cost = known_cost - compute_cost * reduction / 100
 complete = summary.records > 0 and summary.unpriced_records == 0
-mode_label = "SIMULATION – erfundene Daten und Preise" if params["data_mode"] == "demo" else "LIVE – Listenpreis-Schätzung"
-status = ("Keine Daten" if summary.records == 0 else
-          "Unvollständig: Preise fehlen" if not complete else
-          "Budget überschritten" if known_cost > budget else "Innerhalb des Budgets")
+mode_label = "SIMULATION - synthetic data and prices" if params["data_mode"] == "demo" else "LIVE - list-price estimate"
+status = ("No data" if summary.records == 0 else
+          "Incomplete: missing prices" if not complete else
+          "Over budget" if known_cost > budget else "Within budget")
 currency = escape(params["currency"])
 max_bar = max([abs(Decimal(r.cost or 0)) for r in daily_rows] + [Decimal(1)])
 bars = "".join(
@@ -161,24 +161,24 @@ bars = "".join(
 displayHTML(f"""
 <div style="font-family:Arial,sans-serif;color:#19324a;padding:24px;background:#f4f7fb;border-radius:12px">
   <div style="font-weight:bold;color:#805500">{mode_label}</div>
-  <h2>Kosten und Budget</h2>
-  <p>{start} bis {end} · {escape(params['workspace_id'])} · {status}</p>
+  <h2>Costs and budget</h2>
+  <p>{start} to {end} · {escape(params['workspace_id'])} · {status}</p>
   <div style="display:flex;gap:32px;flex-wrap:wrap">
-    <div>Bepreiste Nutzung<h2>{known_cost:.2f} {currency}</h2></div>
-    <div>Zeitraumbudget<h2>{budget:.2f} {currency}</h2></div>
-    <div>Szenario: Compute −{reduction}%<h2>{scenario_cost:.2f} {currency}</h2></div>
+    <div>Priced usage<h2>{known_cost:.2f} {currency}</h2></div>
+    <div>Period budget<h2>{budget:.2f} {currency}</h2></div>
+    <div>Scenario: compute −{reduction}%<h2>{scenario_cost:.2f} {currency}</h2></div>
   </div>
-  <p>{summary.records} Abrechnungszeilen · {summary.unpriced_records} ohne passenden Preis.
-     Szenario ist eine Rechenannahme, keine zugesicherte Einsparung.</p>
-  <h3>Tägliche Kosten</h3>{bars or '<p>Keine Daten im gewählten Bereich.</p>'}
-  <p>* Unvollständiger Tag. Negative Werte können Abrechnungskorrekturen sein.</p>
+  <p>{summary.records} billing records · {summary.unpriced_records} without a matching price.
+     The scenario is an assumption, not a guaranteed saving.</p>
+  <h3>Daily costs</h3>{bars or '<p>No data in the selected period.</p>'}
+  <p>* Incomplete day. Negative values can represent billing corrections.</p>
 </div>
 """)
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Ressourcen und Nutzungseinheiten
-# MAGIC DBU, Speicher- und andere Einheiten werden getrennt summiert.
+# MAGIC ## Resources and usage units
+# MAGIC DBUs, storage and other units are aggregated separately.
 
 # COMMAND ----------
 display(spark.sql("""
@@ -192,8 +192,8 @@ display(spark.sql("""
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Kosten nach Identität und Kostenstelle
-# MAGIC UNASSIGNED bleibt sichtbar. Warehouse-Owner und Run-as sind unterschiedliche Rollen.
+# MAGIC ## Costs by identity and cost centre
+# MAGIC UNASSIGNED remains visible. Warehouse owner and run-as are different roles.
 
 # COMMAND ----------
 display(spark.sql("""
@@ -208,7 +208,7 @@ display(spark.sql("""
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Kosten je Job-Lauf
+# MAGIC ## Costs by job run
 
 # COMMAND ----------
 display(spark.sql("""
@@ -222,13 +222,13 @@ display(spark.sql("""
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Grenzen und Quellen
-# MAGIC Abrechnung kann verzögert eintreffen. Leere Ergebnisse beweisen keine Kostenfreiheit.
-# MAGIC Listenpreise enthalten keine individuellen Vertragsrabatte; separate Cloud-Rechnungen werden nicht importiert.
-# MAGIC Nicht jede Nutzung hat Job-ID oder Benutzerzuordnung. Geteilte Warehouses werden hier nicht je Abfragebenutzer aufgeteilt.
-# MAGIC Ein Preiswechsel innerhalb einer Nutzungszeile wird als fehlender Preis ausgewiesen, nicht geschätzt.
-# MAGIC Projekt-Tag ODER Job-ID bestimmt den Filter. Für alle Workspace-Ressourcen beide Parameter leeren.
-# MAGIC Die Beispiel-Daten simulieren auch Speicher; Live zeigt nur in system.billing.usage vorhandene Positionen.
-# MAGIC Quellen: [Billing](https://docs.databricks.com/aws/en/admin/system-tables/billing),
-# MAGIC [Preise](https://docs.databricks.com/aws/en/admin/system-tables/pricing),
+# MAGIC ## Limitations and sources
+# MAGIC Billing data can arrive late. Empty results do not prove zero cost.
+# MAGIC List prices exclude contract discounts and separate cloud invoices.
+# MAGIC Not all usage has a job or user identity. Shared warehouse costs are not allocated to query users.
+# MAGIC A price change within a usage record is treated as a missing price.
+# MAGIC The project tag OR job ID selects usage. Leave both empty for the entire workspace.
+# MAGIC Demo data includes simulated storage; live mode shows only records available in system.billing.usage.
+# MAGIC Sources: [Billing](https://docs.databricks.com/aws/en/admin/system-tables/billing),
+# MAGIC [Prices](https://docs.databricks.com/aws/en/admin/system-tables/pricing),
 # MAGIC [Serverless usage policies](https://docs.databricks.com/aws/en/admin/usage/budget-policies).

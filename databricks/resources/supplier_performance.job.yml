@@ -6,24 +6,32 @@ resources:
         project: supplier_performance
         environment: ${bundle.target}
         cost_center: ${var.cost_center}
-      # Serverless-Abrechnungstags kommen aus der usage policy, nicht aus Notebook-Parametern.
-      # Erst mit echter Policy-ID auch die Variable in databricks.yml aktivieren.
-      # budget_policy_id: ${var.serverless_usage_policy_id}
+      # Bind budget_policy_id only after an administrator creates a serverless usage policy.
       max_concurrent_runs: 1
-      # Täglich um 06:00 Uhr in Berlin. Der Zeitplan ist pausiert.
       schedule:
         quartz_cron_expression: '0 0 6 * * ?'
         timezone_id: Europe/Berlin
         pause_status: PAUSED
-      # Monatliche Alternative: '0 0 6 1 * ?' (am 1. des Monats).
       parameters:
         - name: catalog
-          default: ${var.catalog}
-        - name: schema_name
-          default: ${resources.schemas.project_schema.name}
+          default: ${resources.catalogs.project_catalog.name}
+        - name: table_prefix
+          default: ${bundle.target}_
+        - name: gold_schema
+          default: ${resources.schemas.gold_schema.name}
+        - name: bronze_schema
+          default: ${resources.schemas.bronze_schema.name}
+        - name: silver_schema
+          default: ${resources.schemas.silver_schema.name}
+        - name: gold_internal_schema
+          default: ${resources.schemas.gold_internal_schema.name}
         - name: source_path
-          default: ${resources.volumes.source_files.volume_path}
-        # Annahme für die Demo, kein bestätigter Extraktstichtag.
+          default: ${resources.volumes.landing_files.volume_path}
+        - name: branch_groups_json
+          default: ${var.branch_groups_json}
+        - name: central_group
+          default: ${var.central_group}
+        # Demo assumptions, not confirmed business rules.
         - name: as_of_date
           default: '2026-09-30'
         - name: min_items

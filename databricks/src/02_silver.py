@@ -1,13 +1,12 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Silver: SAP-Daten bereinigen
-# MAGIC Gültige Datensätze und Quarantäne getrennt speichern. Regeln: DATA_RULES.md.
-# MAGIC Datumsfelder werden als DATE gespeichert (Anzeige meist yyyy-MM-dd).
-# MAGIC Nummern bleiben STRING mit führenden Nullen; Mengen und Beträge bleiben DECIMAL.
+# MAGIC # Silver: Clean SAP data
+# MAGIC Keep valid records and quarantine separately. See DATA_RULES.md.
+# MAGIC Dates use DATE; identifiers keep leading zeros as STRING; quantities and amounts use DECIMAL.
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Parameter
+# MAGIC ## Parameters
 
 # COMMAND ----------
 from functools import reduce
@@ -15,26 +14,33 @@ from functools import reduce
 from pyspark.sql import Window
 from pyspark.sql import functions as F
 
-dbutils.widgets.text("catalog", "workspace", "Zielkatalog")
-dbutils.widgets.text("schema_name", "supplier_performance_dev", "Zielschema")
+dbutils.widgets.text("catalog", "supplier_performance_dev", "Target catalog")
+dbutils.widgets.text("bronze_schema", "dev_bronze", "Bronze schema")
+dbutils.widgets.text("silver_schema", "dev_silver", "Silver schema")
+dbutils.widgets.text("table_prefix", "dev_", "Table prefix")
 
 # COMMAND ----------
 catalog = dbutils.widgets.get("catalog").strip()
-schema_name = dbutils.widgets.get("schema_name").strip()
-if not catalog or not schema_name:
-    raise ValueError("catalog und schema_name müssen gesetzt sein.")
+bronze_schema = dbutils.widgets.get("bronze_schema").strip()
+silver_schema = dbutils.widgets.get("silver_schema").strip()
+table_prefix = dbutils.widgets.get("table_prefix").strip()
+if not all([catalog, bronze_schema, silver_schema, table_prefix]):
+    raise ValueError("Set catalog, bronze_schema, silver_schema and table_prefix.")
 
 
 def table_path(name):
+    layer, suffix = name.split("_", 1)
+    schema_name = {"bronze": bronze_schema, "silver": silver_schema}[layer]
+    name = table_prefix + suffix
     return ".".join(f"`{part.replace('`', '``')}`" for part in [catalog, schema_name, name])
 
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Regeln
+# MAGIC ## Rules
 
 # COMMAND ----------
-# Reihenfolge: Stammdaten und Köpfe vor abhängigen Positionen.
+# Process master data and headers before dependent items.
 specs = {
     "lfa1": {"key": ["LIFNR"], "required": ["NAME1"]},
     "mara": {"key": ["MATNR"], "required": ["MEINS"]},
@@ -83,7 +89,7 @@ def usable(frame):
 
 
 def reference(frame, parent, keys, label, fields=()):
-    # Silver-Eltern haben höchstens eine Zeile pro Kandidatenschlüssel.
+    # Silver parents have at most one row per candidate key.
     lookup = spark.table(table_path(f"silver_{parent}")).select(
         *keys,
         F.lit(True).alias(f"_ref_{label}_found"),
@@ -95,14 +101,14 @@ def reference(frame, parent, keys, label, fields=()):
 
 
 def compare(frame, left, right, reason):
-    # Bei fehlendem Elternsatz bleibt der Referenzfehler maßgeblich.
+    # Missing parents are handled by the reference check.
     return flag(frame, F.col(left).isNotNull() & F.col(right).isNotNull()
                 & (F.col(left) != F.col(right)), reason)
 
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Daten bereinigen
+# MAGIC ## Clean data
 
 # COMMAND ----------
 quarantine_frames = []
@@ -116,9 +122,9 @@ for name, spec in specs.items():
         expected.add("LOEKZ")
     missing_columns = expected - set(fields)
     if missing_columns:
-        raise ValueError(f"bronze_{name}: fehlende Spalten {sorted(missing_columns)}")
+        raise ValueError(f"bronze_{name}: missing columns {sorted(missing_columns)}")
 
-    # Nur identische Quellfelder zusammenfassen; Herkunft bleibt erhalten.
+    # Deduplicate identical source fields; preserve lineage.
     frame = source.groupBy(*fields).agg(
         F.count("*").alias("_source_occurrences"),
         F.sort_array(F.collect_set("_source_file")).alias("_source_files"),
@@ -149,7 +155,7 @@ for name, spec in specs.items():
         frame = frame.drop(column).withColumnRenamed("_parsed", column)
 
     for column in spec.get("numbers", []):
-        # Punkt oder Komma als Dezimalzeichen, keine Tausendertrennzeichen.
+        # Accept a decimal dot or comma; no thousands separator.
         frame = frame.withColumn("_parsed", F.when(
             F.col(column).rlike(r"^[+-]?\d+(?:[.,]\d{1,6})?$"),
             F.expr(f"try_cast(replace(`{column}`, ',', '.') AS DECIMAL(38,6))"),
@@ -208,7 +214,7 @@ for name, spec in specs.items():
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Quarantäne und Ergebnis
+# MAGIC ## Quarantine and results
 
 # COMMAND ----------
 quarantine = reduce(lambda left, right: left.unionByName(right), quarantine_frames)
