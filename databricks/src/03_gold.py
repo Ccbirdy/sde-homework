@@ -16,7 +16,7 @@ from pyspark.sql import functions as F
 
 dbutils.widgets.text("catalog", "supplier_performance_dev", "Target catalog")
 for key, default in [("bronze_schema", "dev_bronze"), ("silver_schema", "dev_silver"),
-                     ("gold_internal_schema", "dev_gold_internal"), ("gold_schema", "dev_gold"),
+                     ("gold_internal_schema", "dev_gold_data"), ("gold_schema", "dev_gold_views"),
                      ("table_prefix", "dev_"), ("branch_groups_json", "{}"), ("central_group", "")]:
     dbutils.widgets.text(key, default, key.replace("_", " ").title())
 dbutils.widgets.text("as_of_date", "2026-09-30", "Evaluation cutoff (assumption, yyyy-MM-dd)")

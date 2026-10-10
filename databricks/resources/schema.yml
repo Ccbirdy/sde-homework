@@ -19,14 +19,14 @@ resources:
       lifecycle:
         prevent_destroy: true
     gold_internal_schema:
-      name: ${bundle.target}_gold_internal
+      name: ${bundle.target}_gold_data
       catalog_name: ${var.catalog}
-      comment: Supplier performance gold_internal layer (${bundle.target}).
+      comment: Supplier performance physical Gold data tables (${bundle.target}).
       lifecycle:
         prevent_destroy: true
     gold_schema:
-      name: ${bundle.target}_gold
+      name: ${bundle.target}_gold_views
       catalog_name: ${var.catalog}
-      comment: Supplier performance gold layer (${bundle.target}).
+      comment: Supplier performance protected Gold query views (${bundle.target}).
       lifecycle:
         prevent_destroy: true

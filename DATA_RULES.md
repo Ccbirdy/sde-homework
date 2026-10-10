@@ -4,17 +4,15 @@ Updated: 2026-10-11. Questions about source semantics remain open. Implementatio
 
 ## Architecture
 
-For dev, the catalog is `supplier_performance_dev`; schemas are `dev_landing`, `dev_bronze`, `dev_silver`, `dev_gold_internal` and `dev_gold`. Object names use `dev_`. Prod follows the same pattern with `prod`.
+For dev, the catalog is `supplier_performance_dev`; schemas are `dev_landing`, `dev_bronze`, `dev_silver`, `dev_gold_data` and `dev_gold_views`. Object names use `dev_`. Prod follows the same pattern with `prod`.
 
 | Layer | Purpose |
 |---|---|
 | Landing | Seven original CSV files manually uploaded to `/Workspace/Users/guochengcheng93@gmail.com/landing_zone_case_solution`. The previously created landing Volume is retained but unused. |
 | Bronze | Source fields as strings, plus source file and load time. Keep source duplicates. |
 | Silver | Typed, validated records, quarantine and load reconciliation. Keep SAP field names for traceability. |
-| Internal Gold | Physical Delta results and operational datasets, with English column names. Restricted to the processing identity and administrators. |
-| Gold | Protected views for business consumption. Example: `supplier_performance_dev.dev_gold.dev_supplier_monthly`. |
-
-Legacy tables were found in `workspace.supplier_performance_dev` on 2026-10-11. Their presence does not verify business correctness. See OPERATIONS.md for migration and validation status.
+| Gold data | Physical Delta results and operational datasets, with English column names. Restricted to the processing identity and administrators. |
+| Gold views | Protected views for business consumption. Example: `supplier_performance_dev.dev_gold_views.dev_supplier_monthly`. |
 
 ## Our interpretations and unconfirmed assumptions
 
@@ -33,7 +31,7 @@ This register distinguishes source-field interpretations, chosen metric definiti
 | 2026-10-11 | `net_unit_price`, `net_order_value`, `currency_code` | NETPR/NETWR on EKPO and WAERS on EKKO. | Display source amounts and currency without conversion. | **Our field interpretation.** Price-unit factors are not supplied; do not reconstruct NETWR as quantity times NETPR or use NETPR for weighted metrics without clarification. |
 | 2026-10-11 | Gold operational datasets | Project owner's request to include purchasing and delivery basics. | Publish valid Silver order items, schedule lines and delivery items alongside performance results. Keep deleted orders flagged and future/open records visible. | **Requested design; our implementation choice.** These are valid Silver records, not the entire raw export. Quarantined records remain in Silver. |
 | 2026-10-11 | Catalog and readable names | Explicit project-owner request. | Use project/environment catalog, layer schemas and English Gold aliases. | **Confirmed technical requirement from the project owner**, not a confirmation of business meanings. |
-| 2026-10-11 | Branch access groups | No branch-specific account groups found during remote inspection. | Default to an empty group mapping and no employee grants. A configured group only reads its matching branch rows. | **Security design.** Employee/group membership and branch ownership still require real information. |
+| 2026-10-11 | Branch access groups | No approved employee-to-branch mapping has been supplied. | Default to an empty group mapping and no employee grants. A configured group only reads its matching branch rows. | **Security design.** Employee/group membership and branch ownership still require real information. |
 
 ## Bronze decisions
 
@@ -87,7 +85,7 @@ Rates range from 0 to 1. `evaluation_coverage_rate` = evaluated_order_item_count
 
 ## Gold datasets
 
-All names below are prefixed with `dev_` in dev and published in `dev_gold`; physical backing tables use the same names in `dev_gold_internal`.
+All names below are prefixed with `dev_` in dev and published in `dev_gold_views`; physical backing tables use the same names in `dev_gold_data`.
 
 | Name suffix | Grain and contents |
 |---|---|
@@ -110,4 +108,4 @@ For each change record date, rule, observed evidence, decision, origin (`our int
 
 ## Landing Zone decision (2026-10-11)
 
-Origin: explicit project-owner instruction. Use the uploaded Workspace folder as Bronze input. This is a confirmed technical path choice, not confirmation of business semantics or export completeness. The input parser reads semicolon-delimited UTF-8 (optional BOM), accepts quoted fields, keeps strings and duplicates, and maps empty fields to null. Malformed rows fail before Bronze writes. The seven expected CSV names are unchanged; other files are ignored. Pipeline loading does not validate against the repository's byte-level checksum manifest.
+Origin: explicit project-owner instruction. Use the uploaded Workspace folder as Bronze input. This is a confirmed technical path choice, not confirmation of business semantics or export completeness. The input parser reads semicolon-delimited UTF-8 (optional BOM), accepts quoted fields, keeps strings and duplicates, and maps empty fields to null. Malformed rows fail before Bronze writes. The seven expected CSV names are unchanged; other files are ignored. The uploaded files are the active input; repository fixtures are for local exploration.

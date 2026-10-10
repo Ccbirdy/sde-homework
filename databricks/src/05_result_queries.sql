@@ -16,7 +16,7 @@
 -- MAGIC 
 -- MAGIC for key, default, label in [
 -- MAGIC     ("catalog", "supplier_performance_dev", "Catalog"),
--- MAGIC     ("gold_schema", "dev_gold", "Gold schema"),
+-- MAGIC     ("gold_schema", "dev_gold_views", "Gold schema"),
 -- MAGIC     ("table_prefix", "dev_", "Table prefix"),
 -- MAGIC     ("report_month", "2026-09-01", "Report month (yyyy-MM-01)"),
 -- MAGIC     ("branch", "ALL", "Branch code or ALL"),
