@@ -1,52 +1,75 @@
-# Zugriff und Kosten
+# Deployment, access and costs
 
-Stand: 10.10.2026. Kosten-Notebook und SQL-Abfragen sind vorbereitet, noch nicht ausgeführt. Zugriff nach Niederlassung ist ein Entwurf und noch nicht eingerichtet.
+Updated: 2026-10-11. The revised code uses a dedicated project catalog and English notebooks. README files are intentionally unchanged at the project owner's request; this document describes the new structure.
 
-## Datenmodell und Niederlassungen
+## Catalog layout
 
-Gold enthält aktuell eine breite Tabelle je Bestellposition, Lieferbelege und Monatsaggregate. Es gibt noch kein Sternschema mit getrennten Dimensionstabellen. Gold kann sowohl Fakten und Dimensionen als auch fertige Berichtsaggregate enthalten.
+```text
+supplier_performance_dev
+  dev_landing       dev_source_files (Volume)
+  dev_bronze        dev_lfa1, dev_mara, dev_ekko, dev_ekpo, dev_eket, dev_likp, dev_lips
+  dev_silver        corresponding typed tables, dev_quarantine, dev_load_summary
+  dev_gold_internal physical results and operational records; no employee access
+  dev_gold          protected English business views
+```
 
-Eine zusätzliche Schicht namens Platinum ist optional. Sie kann freigegebene Sichten für die Niederlassungen enthalten, ohne die Daten je Niederlassung zu kopieren. Der Name ist eine Projektkonvention und keine Sicherheitsfunktion.
+Example: `supplier_performance_dev.dev_gold.dev_supplier_monthly`. Prod uses `supplier_performance_prod.prod_gold.prod_supplier_monthly`. Layer schemas avoid mixing source records with reports. Internal Gold is required so users cannot bypass view predicates by reading the underlying tables.
 
-Vorgesehene Zugriffskette:
+The main Bundle references an existing catalog through `var.catalog`. A separate `databricks-bootstrap` Bundle deploys a serverless SQL notebook job without catalog dependencies. Run it once before the main deployment; see BOOTSTRAP.md. It uses `CREATE CATALOG IF NOT EXISTS` without a storage path. Official documentation supports this for serverless workspaces using Default Storage; runtime success must still be checked in this workspace. The rejected REST catalog creation path is not reused. Schemas and the source Volume retain `prevent_destroy: true`. The same identity should run bootstrap and main deployment; otherwise provide the main deployer with the required catalog privileges.
 
-1. Kontogruppen, zum Beispiel `branch_2100`, erhalten nur die für sie vorgesehenen Leserechte.
-2. WERKS bestimmt die Niederlassung einer Zeile. Eine Zeilenfilterfunktion prüft die Kontogruppen des Abfragenden. Ohne passende Zuordnung gibt sie false zurück.
-3. Bei ABAC markieren governed tags die betroffenen Tabellen und die WERKS-Spalte. Eine zentrale Policy wendet die Funktion an. Ein Tag allein filtert keine Zeilen.
-4. Bei einer Lösung mit dynamischen Sichten erhalten Leser Zugriff auf die Sichten, nicht auf ungeschützte Basistabellen. Alternativ schützen ABAC-Policies direkt die freigegebenen Tabellen.
+## Deploy and run
 
-Zeilen mit `scope=ALL` enthalten Werte über alle Niederlassungen und bleiben der zentralen Auswertung vorbehalten. Ein Filter auf einem solchen Gesamtergebnis berechnet keine Kennzahlen je Niederlassung neu. Für Niederlassungen werden deshalb die vorhandenen `scope=BRANCH`-Ergebnisse verwendet. Auch Detailtabellen und alternative Zugriffswege müssen geschützt werden. Ein Notebook-Parameter `branch` ist nur ein Anzeigefilter.
+1. Follow BOOTSTRAP.md to deploy and run catalog initialisation before the first main deployment. Push the reviewed repository changes, including both Bundles, `data/source`, scripts and workflows. The repository root is `case_solution`; Actions use `databricks` as their bundle directory.
+2. Run **Deploy Databricks** for dev. It first checks that the catalog exists, then validates and deploys schemas, the Volume, jobs and notebooks, then verifies SHA-256 checksums and uploads the seven unchanged synthetic source CSV files. Deployment does not run the processing job.
+3. Run **dev_supplier_performance** in Databricks. Tasks run Bronze, then Silver, then Gold. The daily 06:00 Europe/Berlin schedule stays paused.
+4. Run **Run Databricks review** or the review notebook. Choose a month with data and a branch code or ALL. Review PASS/CHECK output as well as job success.
 
-Offen: echte Kontogruppen, Zugriffsrechte, Verfügbarkeit von governed tags/ABAC und die Freigabe zentraler Berichte. Es wurden keine Gruppen, Grants, Policies oder Platinum-Tabellen angelegt.
+The review Action runs the already deployed notebook version. The selected Git branch only supplies Bundle configuration; deploy code changes first. Deployment and review Actions share a concurrency group. Cancelling a GitHub runner does not prove that the Databricks run has stopped. The review workflow must exist on the default Git branch to be selectable manually.
 
-Quellen: [ABAC-Grundlagen](https://docs.databricks.com/aws/en/data-governance/unity-catalog/abac/core-concepts), [ABAC und Tabellenfilter](https://docs.databricks.com/aws/en/data-governance/unity-catalog/abac/abac-vs-rls-cm).
+Dev and prod use the same workspace with separate catalogs and jobs. Source files are synthetic project fixtures, not employee or customer production data. Original source values, including German product names, are not translated.
 
-## Zuordnung von Kosten
+## Branch access
 
-Der Job erhält die Tags `project=supplier_performance`, `environment=dev/prod` und `cost_center=supplier_analytics`. Die Kostenstelle ist eine Bundle-Variable. Diese Tags beschreiben die Ressource; sie ersetzen keine Serverless usage policy.
+`branch_groups_json` is a JSON object mapping exact source WERKS codes to **existing account group names**, for example `{"2100":"supplier_branch_2100"}`. This is an example, not a provisioned group or an approved employee assignment. `central_group` optionally names an existing central purchasing group. Both default to empty. No branch-specific groups were present during the remote inspection on 2026-10-11.
 
-Für Serverless-Abrechnungstags muss ein berechtigter Administrator eine usage policy erstellen. Die Policy sollte dieselben drei Tags enthalten und für den jeweiligen Workspace und die ausführende Identität nutzbar sein. Für unterschiedliche Umgebungen sind getrennte Policies sinnvoll. Danach die kommentierte Variable `serverless_usage_policy_id` in `databricks.yml` mit der echten ID aktivieren und in der Job-YAML `budget_policy_id` aktivieren. IDs bei Bedarf je Target überschreiben. Ohne Policy-ID wurde keine Bindung eingerichtet.
+The Gold notebook creates dynamic views and grants only USE CATALOG, USE SCHEMA on Gold, and SELECT on the relevant views to configured groups. The publisher identity and optional central group can read all rows. Branch groups can read only matching `branch_code` rows; supplier aggregates also require `report_scope = 'BRANCH'`. Global quality/unassigned records remain central-only. An empty mapping provides no branch access. Changing a group mapping updates view predicates; users from removed groups can no longer see branch rows even if an old USE privilege remains.
 
-Die Ausführungsidentität wird bereits in `system.billing.usage.identity_metadata.run_as` erfasst. Sie ist nicht unbedingt die Person, die den Job ausgelöst hat. Bei einem gemeinsamen Service Principal erscheint dieser für mehrere Benutzer. Für eine Zuordnung zum Auslöser wären zusätzlich Audit- oder Job-Run-Daten notwendig. Ein frei eingegebener Benutzerparameter ist dafür kein verlässlicher Nachweis.
+Do not grant branch employees SELECT on Bronze, Silver, internal Gold, or broad inherited SELECT/ALL PRIVILEGES at catalog level. Do not make branch users owners of views or grant them MANAGE/CREATE privileges. Inspect inherited grants when adding real groups. Users with administrative or ownership privileges can manage/bypass this application boundary; ordinary employee isolation does not restrict administrators.
 
-Quelle: [Serverless usage policies](https://docs.databricks.com/aws/en/admin/usage/budget-policies).
+Employees must query Gold using their own identities. Do not grant them access to run owner-identity jobs or view their global outputs. The review job is an administrative presentation tool, not an employee access portal. A notebook branch widget is only a display filter. Groups and memberships must be verified with two different branch identities before describing employee isolation as operationally tested. No employee memberships are invented.
 
-## Kosten-Notebook
+The WERKS-to-branch interpretation is explicitly unconfirmed; see DATA_RULES.md. A separate Platinum layer is not necessary for these protected Gold views.
 
-`databricks/src/04_cost_management.py` ist eine interaktive Notebook-Übersicht mit Tagesdiagramm, Budget-Simulation, Ressourcen-, Identitäts- und Job-Run-Tabellen. Es ist kein bereits veröffentlichtes AI/BI-Dashboard. Die enthaltene Abfrage `LIVE_SQL` kann als Datensatz für ein solches Dashboard verwendet werden.
+Sources: [Dynamic views](https://docs.databricks.com/aws/en/views/dynamic), [Unity Catalog privileges](https://docs.databricks.com/aws/en/data-governance/unity-catalog/manage-privileges), [Bundle catalog resources](https://docs.databricks.com/aws/en/dev-tools/bundles/resources#catalogs).
 
-- `data_mode=demo`: erfundene Daten und Preise; keine Billing-Berechtigung nötig. Die Notebook-Ausführung selbst benötigt weiterhin Compute.
-- `data_mode=live`: system.billing.usage und system.billing.list_prices. Leserechte auf beide Tabellen sowie USE CATALOG/USE SCHEMA sind erforderlich.
-- `start_date` / `end_date`: inklusive Grenzen, höchstens 366 Tage. `period_budget` gilt für genau diesen Zeitraum in der gewählten Währung.
-- `workspace_id`: Workspace begrenzen. `project` und `job_id` sind ODER-Filter. Beide leeren, um alle verfügbaren Workspace-Kosten zu sehen. Die voreingestellte Job-ID gehört zum bestehenden dev-Job.
-- `compute_reduction_pct`: hypothetische Verringerung des Compute-Kostenanteils. Kein Abschalten von Ressourcen und keine garantierte Einsparung.
+## Migration from the legacy schema
 
-Die Schätzung verwendet zeitlich passende Listenpreise und berücksichtigt negative Korrekturen. Fehlende Preise werden gezählt. Verbrauchseinheiten werden getrennt summiert. Vertragsrabatte und separate Cloud-Rechnungen sind nicht enthalten. Die Übersicht misst Kosten, keine CPU-Auslastung. Keine Daten bedeutet nicht automatisch keine Kosten. Zugriff auf Kosten- und Identitätsdaten ist getrennt von den Lieferantenberichten zu vergeben.
+The old location is `workspace.supplier_performance_dev`. Before removal, compare remote source files with the repository's seven checksummed copies. Preserve a remote object inventory and Bundle state backup outside tracked source. Detach the old schema and Volume from Bundle state before removing them; keep existing job bindings so Actions updates the jobs instead of duplicating them. Remove only explicitly inventoried project tables and the source Volume, then remove the empty project schema without cascading into other schemas. Never delete the `workspace` catalog or another project's data.
 
-## Ergebnisabfragen
+The new deployment uploads source files from the repository, so the removed Volume is not required to rebuild results. Existing result data is derived from the source snapshot; it will be regenerated after deployment and a successful processing run. Remote cleanup and validation evidence are recorded in MIGRATION.md when completed. A successful Bundle validation alone is not a runtime test.
 
-`databricks/src/05_result_queries.sql` vereint Ergebnisvorstellung und Prüfung. Am Anfang stehen Monatskennzahlen, die schwächsten Lieferanten, ein Vergleichsdiagramm und der Monatsverlauf. Danach folgen Ergebnisdaten, Bestell- und Lieferbelege, Qualitätsgrenzen und technische Prüfungen. Die Diagramme lesen dieselben Gold-Tabellen wie die Abfragen; es gibt keine zweite KPI-Berechnung mit anderen Regeln. Gesamtquoten werden nach bewerteten Positionen gewichtet. Parameter: `catalog`, `schema_name`, `report_month`, `branch`; optional `po_number` und `po_item`. Nummern mit führenden Nullen eingeben. Das SQL-Notebook enthält Python-Zellen für Widgets und Diagramme. Die Abfragen ändern keine Geschäftstabellen. PASS/CHECK sind Abfrageergebnisse; ein grüner Job-Status allein bestätigt keine fachlich korrekten Daten.
+## Result review
 
-Der separate Job `supplier_performance_review` führt das Ergebnis-Notebook manuell aus. Er startet keine Verarbeitung und hat keinen Zeitplan. Gold muss vorher erfolgreich gelaufen sein; während eines laufenden Gold-Updates können Teilstände sichtbar sein. Das Kosten-Notebook bleibt separat und wird keinem Job hinzugefügt.
+`05_result_queries.sql` contains Python cells for widgets and plots. It queries the English Gold views for KPI cards, worst suppliers, supplier comparison, monthly trend, item evidence and delivery evidence. Technical checks cover visible records and return PASS/CHECK; job success alone does not imply every check passed.
 
-Der GitHub-Workflow `Run Databricks review` (`.github/workflows/run-review.yml`) startet diesen bereits bereitgestellten Job über `bundle run`. Ziel, Monat, WERKS und optionale Bestellfilter sind auswählbar. Er verwendet dieselbe Authentifizierung wie das Deployment und wartet auf das Job-Ergebnis. Der gewählte Git-Branch liefert nur die Bundle-Konfiguration: Ausgeführt wird der zuletzt in dieses Target deployte Notebook-Stand. Änderungen daher zuerst mit `Deploy Databricks` bereitstellen. Die Workflow-Datei muss für die manuelle Auswahl auch im Default-Branch vorhanden sein. Ein Abbruch des GitHub-Runners ist kein Nachweis, dass der Databricks-Lauf beendet ist; dessen Status bei Bedarf im Workspace prüfen.
+The final section exposes operational purchase order items, deliveries and schedules. Those queries respect branch and optional order filters but do not apply the performance report-month filter, so open/future items remain discoverable. Changing this behaviour requires an explicit business decision. Metrics are read from Gold; the report does not implement a second scoring model.
+
+## Cost attribution
+
+Jobs carry `project=supplier_performance`, `environment=dev/prod`, and `cost_center=supplier_analytics`. These resource tags do not replace a serverless usage policy. A permitted administrator must create a policy with the required billing tags and bind its ID through job `budget_policy_id`. No policy ID is fabricated or bound by this change.
+
+The execution identity is recorded in `system.billing.usage.identity_metadata.run_as`; it may differ from the person starting a job. A shared service principal does not identify individual initiators. Initiator attribution would require audit/job-run data; a user-entered widget is not reliable evidence.
+
+Source: [Serverless usage policies](https://docs.databricks.com/aws/en/admin/usage/budget-policies).
+
+## Cost notebook
+
+`04_cost_management.py` is an interactive notebook, not a published AI/BI dashboard. `LIVE_SQL` can be reused as a dashboard dataset. It stays outside processing/review jobs.
+
+- `data_mode=demo`: synthetic usage and prices, no billing read permission required. Notebook execution can still incur compute cost.
+- `data_mode=live`: reads system.billing.usage and system.billing.list_prices; needs USE CATALOG, USE SCHEMA and SELECT privileges.
+- `start_date` and `end_date`: inclusive, at most 366 days. `period_budget` applies to that full period and currency.
+- `workspace_id`: limits the workspace. `project` OR `job_id` selects usage; leave both empty to include the entire selected workspace. Clear an obsolete job ID after any job replacement.
+- `compute_reduction_pct`: hypothetical reduction of compute costs, not a resource shutdown or guaranteed saving.
+
+The estimate uses time-matched list prices and keeps negative corrections. Missing prices are counted; quantities with different units are not combined. Contract discounts and separate cloud invoices are excluded. Warehouse ownership and run-as identity are distinct. No billing rows does not prove no cost. Billing and identity information require access controls separate from supplier reports.

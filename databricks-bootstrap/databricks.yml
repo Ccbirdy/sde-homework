@@ -1,0 +1,34 @@
+bundle:
+  name: supplier_performance_bootstrap
+  engine: direct
+
+# This Bundle deploys only a notebook job. It requires no project catalog,
+# schema or Volume, so it can be deployed into an empty environment.
+resources:
+  jobs:
+    initialize_catalog:
+      name: supplier_performance_initialize_catalog
+      max_concurrent_runs: 1
+      timeout_seconds: 600
+      tags:
+        project: supplier_performance
+        environment: ${bundle.target}
+        purpose: catalog_bootstrap
+      # No schedule and no classic cluster: run manually on serverless compute.
+      tasks:
+        - task_key: create_catalog
+          notebook_task:
+            notebook_path: ./src/${bundle.target}_create_catalog.sql
+            source: WORKSPACE
+
+targets:
+  dev:
+    default: true
+    presets:
+      name_prefix: "dev_"
+  prod:
+    mode: production
+    presets:
+      name_prefix: "prod_"
+    workspace:
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}

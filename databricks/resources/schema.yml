@@ -2,31 +2,31 @@ resources:
   schemas:
     landing_schema:
       name: ${bundle.target}_landing
-      catalog_name: ${resources.catalogs.project_catalog.name}
+      catalog_name: ${var.catalog}
       comment: Supplier performance landing layer (${bundle.target}).
       lifecycle:
         prevent_destroy: true
     bronze_schema:
       name: ${bundle.target}_bronze
-      catalog_name: ${resources.catalogs.project_catalog.name}
+      catalog_name: ${var.catalog}
       comment: Supplier performance bronze layer (${bundle.target}).
       lifecycle:
         prevent_destroy: true
     silver_schema:
       name: ${bundle.target}_silver
-      catalog_name: ${resources.catalogs.project_catalog.name}
+      catalog_name: ${var.catalog}
       comment: Supplier performance silver layer (${bundle.target}).
       lifecycle:
         prevent_destroy: true
     gold_internal_schema:
       name: ${bundle.target}_gold_internal
-      catalog_name: ${resources.catalogs.project_catalog.name}
+      catalog_name: ${var.catalog}
       comment: Supplier performance gold_internal layer (${bundle.target}).
       lifecycle:
         prevent_destroy: true
     gold_schema:
       name: ${bundle.target}_gold
-      catalog_name: ${resources.catalogs.project_catalog.name}
+      catalog_name: ${var.catalog}
       comment: Supplier performance gold layer (${bundle.target}).
       lifecycle:
         prevent_destroy: true

@@ -40,6 +40,11 @@ jobs:
           DATABRICKS_AUTH_TYPE: pat
           BUNDLE_TARGET: ${{ inputs.target }}
         run: |
+          # Run the separate SQL bootstrap job before the first main deployment.
+          if ! databricks catalogs get "supplier_performance_${BUNDLE_TARGET}" >/dev/null; then
+            echo "Catalog unavailable. Deploy Databricks bootstrap, run the initialization job successfully, then retry. Check access if the catalog already exists."
+            exit 1
+          fi
           databricks bundle validate -t "$BUNDLE_TARGET"
           databricks bundle deploy -t "$BUNDLE_TARGET"
 

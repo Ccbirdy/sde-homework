@@ -14,7 +14,7 @@ resources:
         pause_status: PAUSED
       parameters:
         - name: catalog
-          default: ${resources.catalogs.project_catalog.name}
+          default: ${var.catalog}
         - name: table_prefix
           default: ${bundle.target}_
         - name: gold_schema

@@ -4,6 +4,7 @@
 # MAGIC Evaluate one purchase order item at a time. The final scheduled date determines the month.
 # MAGIC On time means fully delivered by that date. In full means fully delivered by month end.
 # MAGIC See DATA_RULES.md for assumptions. Individual schedule lines are not scored separately.
+# MAGIC English aliases are our interpretations: branch_code (WERKS) and actual_delivery_date (WADAT_IST) remain unconfirmed.
 
 # COMMAND ----------
 from datetime import date
@@ -57,7 +58,8 @@ def read(name):
     return spark.table(table_path(name))
 
 
-# SAP identifiers stay in Bronze/Silver. Gold has a stable English business vocabulary.
+# SAP identifiers stay in Bronze/Silver. These Gold aliases express our provisional interpretations.
+# WERKS as branch and WADAT_IST as delivery date are not customer-confirmed; see DATA_RULES.md.
 column_names = {
     "MANDT": "sap_client_id", "EBELN": "purchase_order_id", "EBELP": "purchase_order_item_id",
     "LIFNR": "supplier_id", "NAME1": "supplier_name", "WERKS": "branch_code",
@@ -293,7 +295,7 @@ save(schedule_lines, "gold_schedule_lines")
 
 # COMMAND ----------
 def sql_literal(value):
-    return "'" + value.replace("\\", "\\\\").replace("'", "''") + "'"
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
 publisher = spark.sql("SELECT session_user() AS user_name").first().user_name

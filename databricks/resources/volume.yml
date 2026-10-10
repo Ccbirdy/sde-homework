@@ -2,7 +2,7 @@ resources:
   volumes:
     landing_files:
       name: ${bundle.target}_source_files
-      catalog_name: ${resources.catalogs.project_catalog.name}
+      catalog_name: ${var.catalog}
       schema_name: ${resources.schemas.landing_schema.name}
       volume_type: MANAGED
       comment: Unchanged source CSV files (${bundle.target}).
