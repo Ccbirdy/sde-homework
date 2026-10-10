@@ -49,6 +49,10 @@ def quoted(value):
     return "`" + value.replace("`", "``") + "`"
 
 
+def sql_literal(value):
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
 def table_path(name):
     layer, suffix = name.split("_", 1)
     return ".".join(map(quoted, [catalog, layer_schemas[layer], table_prefix + suffix]))
@@ -81,6 +85,32 @@ column_names = {
     "fill_rate": "quantity_fill_rate", "mean_fill_rate": "mean_quantity_fill_rate",
     "by_due_date": "is_by_due_date", "by_month_end": "is_by_month_end", "after_cutoff": "is_after_cutoff",
 }
+# Source lineage labels are shown in Catalog Explorer descriptions.
+# MARA also affects Silver material/unit validation; it is not a separate Gold dataset.
+dataset_descriptions = {'purchase_order_items': 'OPERATIONAL DETAIL | Primary source: EKPO (order items). Enriched with EKKO (order '
+                         'header) and LFA1 (supplier). Valid Silver records, not a raw CSV copy; deleted '
+                         'items remain flagged.',
+ 'schedule_lines': 'OPERATIONAL DETAIL | Primary source: EKET (schedule lines). Enriched with EKPO, EKKO and '
+                   'LFA1 for order, branch and supplier context. One row per valid schedule line.',
+ 'delivery_items': 'OPERATIONAL DETAIL | Primary source: LIPS (delivery items), joined to LIKP (delivery '
+                   'header). Enriched with EKPO, EKKO and LFA1. Valid Silver deliveries without a '
+                   'performance-month filter.',
+ 'delivery_evidence': 'DERIVED EVIDENCE | LIPS + LIKP delivery records linked to order-item performance '
+                      'using EKPO, EKKO, EKET and LFA1 context and Silver quarantine. Adds deadline, cutoff '
+                      'and evaluation flags; not an EKET copy.',
+ 'order_item_performance': 'DERIVED ANALYSIS | Bronze EKPO supplies candidate keys. Silver EKPO, EKKO, EKET, '
+                           'LIPS, LIKP and LFA1 plus quarantine supply validated context. Calculates '
+                           'item-level performance and exclusion reasons.',
+ 'supplier_monthly': 'DERIVED AGGREGATE | Aggregates order_item_performance by supplier, month and '
+                     'company/branch scope. Calculates rates, score, sample size, coverage and ranking '
+                     'eligibility.',
+ 'worst_suppliers': 'DERIVED RANKING | Ranks eligible supplier_monthly results. Up to three lowest-scoring '
+                    'suppliers per month and company/branch scope.',
+ 'quality_summary': 'DERIVED QUALITY SUMMARY | Counts order_item_performance evaluation/exclusion reasons '
+                    'and unassigned_quarantine records. Reasons can overlap. Central access only.',
+ 'unassigned_quarantine': 'DERIVED QUALITY DETAIL | Silver quarantine records from EKPO, EKET and LIPS that '
+                          'cannot be matched to Bronze EKPO item keys. Includes raw records and validation '
+                          'reasons. Central access only.'}
 published = []
 
 
@@ -91,6 +121,7 @@ def save(frame, name):
     (business.withColumn("as_of_date", F.lit(as_of_date).cast("date"))
      .withColumn("processed_at", F.current_timestamp())
      .write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(target))
+    spark.sql(f"COMMENT ON TABLE {target} IS {sql_literal(dataset_descriptions[suffix])}")
     published.append((suffix, target, business.columns))
 
 
@@ -294,10 +325,6 @@ save(schedule_lines, "gold_schedule_lines")
 # MAGIC Empty group configuration keeps access closed. Administrative owners can still manage the data.
 
 # COMMAND ----------
-def sql_literal(value):
-    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
-
-
 publisher = spark.sql("SELECT session_user() AS user_name").first().user_name
 central_predicate = "session_user() = " + sql_literal(publisher)
 if central_group:
@@ -315,7 +342,9 @@ for suffix, source, columns in published:
         predicate += " OR (" + branch_condition + ")"
     target = table_path("gold_" + suffix)
     projection = ", ".join(map(quoted, columns + ["as_of_date", "processed_at"]))
-    spark.sql(f"CREATE OR REPLACE VIEW {target} AS SELECT {projection} FROM {source} WHERE {predicate}")
+    description = "PROTECTED VIEW | " + dataset_descriptions[suffix]
+    spark.sql(f"CREATE OR REPLACE VIEW {target} COMMENT {sql_literal(description)} "
+              f"AS SELECT {projection} FROM {source} WHERE {predicate}")
     readers = set(branch_groups.values()) if "branch_code" in columns else set()
     if central_group:
         readers.add(central_group)

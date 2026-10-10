@@ -91,6 +91,24 @@ The score is the mean of the on-time and in-full rates. Each evaluated order ite
 
 The minimum sample remains **1 evaluated item per supplier/month/scope**. Small samples can produce extreme scores. The local source preview found no eligible candidate populations at thresholds 10 or 20; actual Gold evaluated counts are the basis for choosing the threshold. Do not interpret the weakest-three output as a reliable long-term supplier judgement without reviewing sample size, exclusions and the unconfirmed delivery-date semantics. The report computes the current conclusion from the loaded snapshot; this README does not hard-code a winning or losing supplier.
 
+## How Gold relates to the source files
+
+All Gold objects are created by this pipeline. Operational details retain source record grains but add related fields; analytical outputs add calculations. Bronze and Silver retain the source-oriented names (`dev_eket`, `dev_ekpo`, etc.). Catalog Explorer descriptions label every Gold table and view with its category and source lineage.
+
+| Gold name suffix | Category | Main source relationship |
+|---|---|---|
+| `purchase_order_items` | Operational detail | EKPO items + EKKO headers + LFA1 supplier names. |
+| `schedule_lines` | Operational detail | EKET schedules + EKPO/EKKO/LFA1 context. |
+| `delivery_items` | Operational detail | LIPS items + LIKP headers + EKPO/EKKO/LFA1 context. |
+| `delivery_evidence` | Derived evidence | Delivery items linked to item evaluation, with EKET deadlines and computed timing flags. |
+| `order_item_performance` | Derived analysis | Bronze EKPO keys + validated Silver orders, schedules, deliveries, suppliers and quarantine. |
+| `supplier_monthly` | Derived aggregate | Item performance aggregated by supplier/month/scope/branch. |
+| `worst_suppliers` | Derived ranking | Up to three eligible lowest-scoring monthly suppliers. |
+| `quality_summary` | Derived quality summary | Evaluation/exclusion reasons and unassigned quarantine counts. |
+| `unassigned_quarantine` | Derived quality detail | EKPO/EKET/LIPS quarantine records not matched to Bronze EKPO item keys. |
+
+MARA supports material/unit validation in Silver and is not published as its own Gold dataset. These are principal relationships, not a complete column-level lineage inventory. In particular, delivery evidence is not a copy of EKET: EKET contains planned schedule lines, while LIPS/LIKP supply delivery records. Business meanings remain subject to DATA_RULES.md.
+
 ## How branch isolation works
 
 Implementation: the **Publish protected Gold views** section at the end of [03_gold.py](databricks/src/03_gold.py). The notebook generates a `WHERE` predicate using `is_account_group_member()` for the querying identity. For monthly aggregates, branch users additionally require `report_scope = 'BRANCH'`, so they cannot see company totals. Operational views apply the same branch membership check. This follows [Databricks dynamic-view access control](https://docs.databricks.com/aws/en/views/dynamic).
