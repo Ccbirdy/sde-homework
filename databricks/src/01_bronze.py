@@ -1,7 +1,7 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # Bronze: Load SAP source files
-# MAGIC Read the seven small CSV files from the configured Workspace landing folder.
+# MAGIC Read seven SAP CSV files and the customer-confirmed branch mapping from the Workspace landing folder.
 # MAGIC Store source fields as strings. Preserve duplicate records and leading zeros.
 # MAGIC Each run replaces the current table contents. The job identity needs read access to this folder.
 # MAGIC Files are parsed in notebook Python before transfer to Spark; this is intended for the small case-study snapshot.
@@ -52,6 +52,7 @@ source_files = {
     "eket": "EKET_SCHEDULE_LINES.csv",
     "likp": "LIKP_DELIVERY_HEADER.csv",
     "lips": "LIPS_DELIVERY_ITEM.csv",
+    "branch_mapping": "BRANCH_MAPPING.csv",
 }
 
 landing_dir = Path(source_path)
@@ -83,7 +84,7 @@ def read_source_csv(path):
     return header, rows
 
 
-# Validate all seven source files before replacing any Bronze table.
+# Validate all eight source files before replacing any Bronze table.
 # README.txt and any unrelated files are ignored by the explicit source list.
 source_data = {name: read_source_csv(landing_dir / filename)
                for name, filename in source_files.items()}

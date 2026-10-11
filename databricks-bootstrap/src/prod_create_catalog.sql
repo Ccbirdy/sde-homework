@@ -6,7 +6,7 @@
 -- MAGIC No managed storage path is supplied. The catalog uses the workspace's Default Storage.
 -- MAGIC IF NOT EXISTS allows repeated runs without replacing an existing catalog or its data.
 -- MAGIC An existing catalog keeps its original settings; this does not migrate its storage.
--- MAGIC The main Bundle creates schemas, the source Volume and processing jobs afterwards.
+-- MAGIC The main Bundle creates schemas and processing jobs afterwards.
 -- MAGIC Reference: [Default Storage](https://docs.databricks.com/aws/en/storage/default-storage).
 
 -- COMMAND ----------

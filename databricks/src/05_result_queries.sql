@@ -4,7 +4,8 @@
 -- MAGIC Monthly purchasing results by month and branch.
 -- MAGIC On time: fully delivered by the final scheduled date. In full: fully delivered by month end.
 -- MAGIC The performance_score is the mean of both rates; lower values are worse.
--- MAGIC Individual schedule lines are not scored separately. See DATA_RULES.md.
+-- MAGIC Rankings above use the LEGACY final-date method pending a weighting decision.
+-- MAGIC New FIFO schedule-line results and quantity balances are shown separately below. See DATA_RULES.md.
 -- MAGIC This review reads protected Gold views without changing business data.
 
 -- COMMAND ----------
@@ -71,6 +72,7 @@
 -- MAGIC displayHTML(f"""
 -- MAGIC <div style="font-family:Arial,sans-serif;padding:24px;background:#f4f7fb;color:#17344b">
 -- MAGIC <h1>Supplier performance · {month:%Y-%m}</h1>
+-- MAGIC <p>Legacy order-item ranking. New FIFO schedule results are separate; supplier weighting is pending.</p>
 -- MAGIC <p>Branch: {escape(selection['branch'])} · Cutoff: {escape(', '.join(cutoffs) or 'no snapshot')}</p>
 -- MAGIC <div style="display:flex;gap:36px;flex-wrap:wrap">
 -- MAGIC {card('Evaluated order items', n)}{card('On time', pct(weighted('on_time_rate')))}
@@ -285,3 +287,59 @@ WHERE (:branch = 'ALL' OR branch_code = :branch)
   AND (:po_number = '' OR purchase_order_id = :po_number)
   AND (:po_item = '' OR purchase_order_item_id = :po_item)
 ORDER BY branch_code, purchase_order_id, purchase_order_item_id, schedule_line_id;
+
+
+-- COMMAND ----------
+-- MAGIC %md
+-- MAGIC ## FIFO schedule-line results
+-- MAGIC Each plan is evaluated against its own date and month end. Links are inferred.
+-- MAGIC These results do not yet feed the legacy ranking above; supplier weighting is pending.
+
+-- COMMAND ----------
+SELECT * FROM IDENTIFIER(:catalog || '.' || :gold_schema || '.' || :table_prefix || 'schedule_line_performance')
+WHERE report_month = CAST(:report_month AS DATE)
+  AND (:branch = 'ALL' OR branch_code = :branch)
+  AND (:po_number = '' OR purchase_order_id = :po_number)
+  AND (:po_item = '' OR purchase_order_item_id = :po_item)
+ORDER BY purchase_order_id, purchase_order_item_id, scheduled_delivery_date, schedule_line_id;
+
+-- COMMAND ----------
+SELECT * FROM IDENTIFIER(:catalog || '.' || :gold_schema || '.' || :table_prefix || 'delivery_allocations')
+WHERE report_month = CAST(:report_month AS DATE)
+  AND (:branch = 'ALL' OR branch_code = :branch)
+  AND (:po_number = '' OR purchase_order_id = :po_number)
+  AND (:po_item = '' OR purchase_order_item_id = :po_item)
+ORDER BY purchase_order_id, purchase_order_item_id, scheduled_delivery_date, schedule_line_id,
+         actual_delivery_date, delivery_id, delivery_item_id;
+
+-- COMMAND ----------
+-- All delivery dates: show later evidence and excess without attributing it to a false schedule month.
+SELECT * FROM IDENTIFIER(:catalog || '.' || :gold_schema || '.' || :table_prefix || 'delivery_allocation_balance')
+WHERE (:branch = 'ALL' OR branch_code = :branch)
+  AND (:po_number = '' OR purchase_order_id = :po_number)
+  AND (:po_item = '' OR purchase_order_item_id = :po_item)
+ORDER BY purchase_order_id, purchase_order_item_id, actual_delivery_date, delivery_id, delivery_item_id;
+
+-- COMMAND ----------
+WITH schedules AS (
+ SELECT * FROM IDENTIFIER(:catalog || '.' || :gold_schema || '.' || :table_prefix || 'schedule_line_performance')
+), balance AS (
+ SELECT * FROM IDENTIFIER(:catalog || '.' || :gold_schema || '.' || :table_prefix || 'delivery_allocation_balance')
+), checks AS (
+ SELECT 'UNIQUE_SCHEDULE_KEY' AS check_name, COUNT(*) AS violations FROM (
+  SELECT sap_client_id, purchase_order_id, purchase_order_item_id, schedule_line_id FROM schedules
+  GROUP BY sap_client_id, purchase_order_id, purchase_order_item_id, schedule_line_id HAVING COUNT(*) > 1
+ ) duplicates
+ UNION ALL
+ SELECT 'SCHEDULE_ALLOCATION_LIMIT', COUNT(*) FROM schedules WHERE allocated_quantity > schedule_quantity
+ UNION ALL
+ SELECT 'DELIVERY_QUANTITY_BALANCE', COUNT(*) FROM balance
+ WHERE unallocated_quantity < 0 OR delivered_quantity <> allocated_quantity + unallocated_quantity
+ UNION ALL
+ SELECT 'EXCLUDED_SCHEDULES_HAVE_NO_KPI', COUNT(*) FROM schedules
+ WHERE NOT is_evaluable AND (is_on_time IS NOT NULL OR is_in_full IS NOT NULL OR quantity_fill_rate IS NOT NULL)
+ UNION ALL
+ SELECT 'EVALUABLE_SCHEDULES_HAVE_KPI', COUNT(*) FROM schedules
+ WHERE is_evaluable AND (is_on_time IS NULL OR is_in_full IS NULL OR quantity_fill_rate IS NULL)
+)
+SELECT *, CASE WHEN violations = 0 THEN 'PASS' ELSE 'CHECK' END AS status FROM checks;

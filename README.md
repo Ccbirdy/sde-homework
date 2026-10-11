@@ -1,6 +1,6 @@
 # Supplier performance
 
-A reproducible Databricks case solution that turns seven SAP-style CSV extracts into monthly supplier performance, branch reports and traceable purchasing/delivery records. Business interpretations and limitations are recorded in [DATA_RULES.md](DATA_RULES.md); implementation does not imply customer confirmation.
+A reproducible Databricks case solution that turns seven SAP-style CSV extracts and a customer branch mapping into monthly supplier performance, branch reports and traceable purchasing/delivery records. Business interpretations and limitations are recorded in [DATA_RULES.md](DATA_RULES.md); implementation does not imply customer confirmation.
 
 ## Data flow and responsibilities
 
@@ -14,22 +14,30 @@ Workspace CSV landing folder
 
 All four schemas are in `supplier_performance_dev`. Prod uses `supplier_performance_prod` and the `prod_` prefix. Gold data stores the actual records; Gold views read those records and apply access predicates without making a second copy. Processing identities and administrators maintain the tables. Employees query only the views.
 
-The active landing folder is `/Workspace/Users/guochengcheng93@gmail.com/landing_zone_case_solution`. The Bundle also retains an unused `dev_landing.dev_source_files` Volume; it is not an ingestion input. Configure `source_path` in [databricks.yml](databricks/databricks.yml) to use another Workspace folder. Dev and prod currently share the demonstration input.
+The active landing folder is `/Workspace/Users/guochengcheng93@gmail.com/landing_zone_case_solution`. The unused Landing Volume and schema have been removed from the Bundle configuration. Existing cloud resources require the one-time cleanup described below. Configure `source_path` in [databricks.yml](databricks/databricks.yml) to use another Workspace folder. Dev and prod currently share the demonstration input.
 
 | Code | Responsibility |
 |---|---|
 | [00_dataquality.ipynb](databricks/src/00_dataquality.ipynb) | Explore source quality and sample-size thresholds; the final sections distinguish local candidate counts from actual Gold evaluated counts. |
-| [01_bronze.py](databricks/src/01_bronze.py) | Parse all seven CSV files before writing source strings and lineage. |
-| [02_silver.py](databricks/src/02_silver.py) | Type and validate fields, remove exact duplicates, quarantine conflicting/invalid records, reconcile row counts. |
+| [01_bronze.py](databricks/src/01_bronze.py) | Parse all eight CSV files before writing source strings and lineage. |
+| [02_silver.py](databricks/src/02_silver.py) | Type and validate fields, remove exact duplicates, select latest EKKO AEDAT under the demo rule, archive superseded rows, quarantine unresolved/invalid records and reconcile row counts. |
 | [03_gold.py](databricks/src/03_gold.py) | Calculate metrics, publish operational tables and create protected views with group grants. |
 | [05_result_queries.sql](databricks/src/05_result_queries.sql) | Present KPI cards, rankings, trends, evidence, quality checks and operational records. Includes Python plotting cells. |
 | [04_cost_management.py](databricks/src/04_cost_management.py) | Optional interactive cost demonstration or live billing analysis, separate from the processing jobs. |
+
+## Environment isolation and Free Edition limitation
+
+This case solution uses Databricks Free Edition, which permits only one workspace per account. The current deployment configuration therefore separates dev and prod by catalog (`supplier_performance_dev` and `supplier_performance_prod`) within the same workspace, with separate schemas and jobs. Selecting `prod` in GitHub Actions does not create or switch to a separate workspace. The prod catalog is created only after running the prod bootstrap; a configured target does not mean that environment has already been deployed.
+
+For a production deployment, the preferred architecture is separate dev and prod workspaces, with separate deployment credentials, jobs and source locations, while retaining separate catalogs. This provides stronger operational isolation. Catalog permissions and, when sharing a Unity Catalog metastore, workspace-catalog bindings must also be configured to control cross-environment data access; separate workspaces alone are not a complete data-access boundary. The current single-workspace setup is a demonstration constraint, not the recommended production architecture.
+
+Reference: [Databricks Free Edition limitations](https://docs.databricks.com/aws/en/getting-started/free-edition-limitations).
 
 ## First-time setup
 
 Requirements: a Databricks workspace with serverless compute and Default Storage, a deployment identity with catalog creation privileges and access to the source folder, and GitHub Actions configured with repository variable `DATABRICKS_HOST` and secret `DATABRICKS_TOKEN`. Use the same identity for bootstrap and processing, or arrange the required catalog privileges explicitly. This repository pins Databricks CLI 1.20.0 in Actions.
 
-1. Upload these original files to the landing folder: `LFA1_VENDOR_MASTER.csv`, `MARA_MATERIAL_MASTER.csv`, `EKKO_PO_HEADER.csv`, `EKPO_PO_ITEM.csv`, `EKET_SCHEDULE_LINES.csv`, `LIKP_DELIVERY_HEADER.csv`, `LIPS_DELIVERY_ITEM.csv`. Other files are ignored. Files use semicolons and UTF-8, optionally with a BOM.
+1. Upload these original files to the landing folder: `LFA1_VENDOR_MASTER.csv`, `MARA_MATERIAL_MASTER.csv`, `EKKO_PO_HEADER.csv`, `EKPO_PO_ITEM.csv`, `EKET_SCHEDULE_LINES.csv`, `LIKP_DELIVERY_HEADER.csv`, `LIPS_DELIVERY_ITEM.csv`, plus `BRANCH_MAPPING.csv` (local source: `../DIC_Arbeitsprobe_Testdaten_SAP_MM/BRANCH_MAPPING.csv`). Upload the mapping to the same Workspace folder; deployment does not upload this CSV. Other files are ignored. Files use semicolons and UTF-8, optionally with a BOM.
 2. In GitHub Actions run **Deploy Databricks bootstrap**, selecting `dev` and the code branch to deploy.
 3. In Databricks Jobs & Pipelines run **dev_supplier_performance_initialize_catalog** and wait for success. This runs `CREATE CATALOG IF NOT EXISTS` from the [bootstrap SQL](databricks-bootstrap/src/dev_create_catalog.sql).
 4. Run **Deploy Databricks** for `dev`, then run **dev_supplier_performance** in Databricks to populate the layers.
@@ -87,7 +95,7 @@ WHERE report_month = DATE '2026-09-01'
 ORDER BY performance_score, supplier_id;
 ```
 
-The score is the mean of the on-time and in-full rates. Each evaluated order item has equal weight; amounts and quantities do not weight the ranking. On time means complete by the final scheduled date, while in full means complete by reporting month end. Lower scores are worse. Rates are stored between 0 and 1.
+For the retained legacy supplier ranking, the score is the mean of the on-time and in-full rates. Each evaluated order item has equal weight; amounts and quantities do not weight the ranking. On time means complete by the final scheduled date, while in full means complete by reporting month end. Lower scores are worse. Rates are stored between 0 and 1.
 
 The minimum sample remains **1 evaluated item per supplier/month/scope**. Small samples can produce extreme scores. The local source preview found no eligible candidate populations at thresholds 10 or 20; actual Gold evaluated counts are the basis for choosing the threshold. Do not interpret the weakest-three output as a reliable long-term supplier judgement without reviewing sample size, exclusions and the unconfirmed delivery-date semantics. The report computes the current conclusion from the loaded snapshot; this README does not hard-code a winning or losing supplier.
 
@@ -142,3 +150,30 @@ Before employee release, verify group membership and inherited grants, then test
 [DATA_RULES.md](DATA_RULES.md) contains the field interpretations, candidate keys, quarantine rules, metric/exclusion definitions and dataset grains. `WERKS` as branch and `WADAT_IST` as actual delivery date remain unconfirmed interpretations. Readable aliases do not confirm these meanings.
 
 The cost notebook supports `demo` (synthetic usage/prices) and `live` (billing system tables requiring separate access). Live estimates use time-matched list prices, exclude contract discounts and separate cloud invoices, and report missing prices. Its budget covers the selected date period; reduction scenarios are hypothetical. Notebook execution itself can incur compute costs. Job resource tags identify project, environment and cost centre; no serverless usage policy is bound. A shared run identity does not identify the person who started each run.
+
+## Approved reference and EKKO update (2026-10-11)
+
+Gold adds customer-confirmed branch names from Landing -> Bronze -> Silver and publishes a protected `branch_mapping` view. Unknown codes remain visible with `branch_mapping_status = UNMAPPED`. Existing access controls continue to use branch codes.
+
+Silver uses EKKO.AEDAT as an explicitly authorised synthetic-case version proxy. Six local conflicting keys have unique latest dates. Older rows go to `dev_superseded_records`; unresolved ties and missing dates remain quarantined. No date proxy is applied to other SAP tables. Reconciliation includes the new `superseded_rows` column. FIFO delivery allocation and per-schedule evaluation have since been approved and implemented. Supplier weighting remains pending; existing supplier rankings are explicitly labelled legacy final-date results.
+
+## FIFO schedule evaluation
+
+Gold now adds `delivery_allocations`, `schedule_line_performance` and `delivery_allocation_balance`. Plans are ordered by due date and plan ID; deliveries by actual date and delivery IDs within each order item. Quantities are split as needed without double counting. Each plan uses its own due date for on-time status and its own month end for in-full status. See DATA_RULES.md for cutoff, exclusion, excess and early-delivery handling.
+
+Supplier aggregation weights remain undecided. Existing monthly rankings retain the old final-date method, carry `metric_basis = LEGACY_ORDER_ITEM_FINAL_DATE`, and are explicitly separated from FIFO detail in the review notebook. Do not present them as the new schedule-based ranking.
+
+Local tests: `.venv/Scripts/python.exe -m unittest discover -s tests -v`. These execute the production allocation SQL using SQLite and do not replace a Databricks Spark run.
+
+## One-time removal of the unused Landing Volume
+
+Only the Workspace folder remains the active Landing Zone. The user moved the local mapping into `../DIC_Arbeitsprobe_Testdaten_SAP_MM/` and reported uploading it. The editor URL does not establish its parent folder; Bronze requires the CSV inside the configured source_path.
+
+This change removes the `landing_files` Volume and `landing_schema` declarations. An existing deployment had `prevent_destroy: true`; deleting the YAML alone is not proof of cloud deletion and may be blocked by deployed lifecycle state. Before deploying this removal, use the previous Bundle configuration (which still defines these resources) and unlink only these two keys:
+
+```powershell
+databricks bundle deployment unbind landing_files -t dev
+databricks bundle deployment unbind landing_schema -t dev
+```
+
+Unbind removes management state, not data ([Databricks CLI documentation](https://docs.databricks.com/aws/en/dev-tools/cli/bundle-commands)). Then run `databricks/migrations/remove_unused_dev_landing.py` once in Databricks. It refuses to drop a nonempty Volume and uses RESTRICT for the schema; it never touches the Workspace Landing CSVs. The migration is not included in recurring jobs. Deploy the new Bundle afterwards. No cloud deletion or deployment was performed from this local change because the browser session required sign-in. Prod is not targeted by the dev cleanup script.

@@ -1,14 +1,14 @@
 # Data rules, interpretations and decisions
 
-Updated: 2026-10-11. Questions about source semantics remain open. Implementation does not imply customer confirmation. The project owner requested English Gold column names and a separate project catalog. Those are design decisions; the business meanings below remain provisional.
+Updated: 2026-10-11. Customer replies confirm SAP-ECC semantics for EKKO/EKPO/EKET/LIKP/LIPS, the four branch names, and latest-change-date precedence. EKKO.AEDAT as a version proxy is separately authorised by the project owner for this synthetic case. Other source questions remain open. The project owner requested English Gold column names and a separate project catalog. Those are design decisions; the business meanings below remain provisional.
 
 ## Architecture
 
-For dev, the catalog is `supplier_performance_dev`; schemas are `dev_landing`, `dev_bronze`, `dev_silver`, `dev_gold_data` and `dev_gold_views`. Object names use `dev_`. Prod follows the same pattern with `prod`.
+For dev, the catalog is `supplier_performance_dev`; schemas are `dev_bronze`, `dev_silver`, `dev_gold_data` and `dev_gold_views`. Object names use `dev_`. Prod follows the same pattern with `prod`.
 
 | Layer | Purpose |
 |---|---|
-| Landing | Seven original CSV files manually uploaded to `/Workspace/Users/guochengcheng93@gmail.com/landing_zone_case_solution`. The previously created landing Volume is retained but unused. |
+| Landing | Seven original SAP CSV files plus BRANCH_MAPPING.csv manually uploaded to `/Workspace/Users/guochengcheng93@gmail.com/landing_zone_case_solution`. Unused Landing Volume/schema definitions have been removed. Cloud deletion still requires the one-time migration; no authenticated cloud session was available during this change. |
 | Bronze | Source fields as strings, plus source file and load time. Keep source duplicates. |
 | Silver | Typed, validated records, quarantine and load reconciliation. Keep SAP field names for traceability. |
 | Gold data | Physical Delta results and operational datasets, with English column names. Restricted to the processing identity and administrators. |
@@ -16,11 +16,11 @@ For dev, the catalog is `supplier_performance_dev`; schemas are `dev_landing`, `
 
 ## Our interpretations and unconfirmed assumptions
 
-This register distinguishes source-field interpretations, chosen metric definitions, and requested technical design. No entry below is a customer-confirmed business rule.
+This register distinguishes source-field interpretations, chosen metric definitions, and requested technical design. Customer confirmations and project-owner decisions are labelled separately below.
 
 | Date | Topic | Basis | Our interpretation or decision | Status and follow-up |
 |---|---|---|---|---|
-| 2026-10-11 | `WERKS` to `branch_code` | Source field appears on order and delivery items; task requires branch reporting. | Treat each WERKS code as the reporting and access branch. Do not invent city names. | **Our unconfirmed interpretation.** Confirm whether a plant/site corresponds one-to-one to a branch and obtain the authorised employee mapping before granting access. |
+| 2026-10-11 | `WERKS` to `branch_code` | Customer reply supplied four branches. | 2000 Hamburg; 2100 Bremen; 2200 Hannover; 2300 Rostock. Store in BRANCH_MAPPING.csv, validate in Silver and left-join in Gold. | **Customer-confirmed mapping.** Employee/group membership remains separate and unconfirmed. |
 | 2026-10-11 | `LIFNR` to `supplier_id`; `NAME1` to `supplier_name` | Supplier master and header joins in this dataset. | Preserve the source identifier as text and use its master name. Identical names do not merge different IDs. | **Our field interpretation.** Confirm identifier scope and master-data semantics. |
 | 2026-10-11 | Order and delivery aliases | Source table names and existing joins. | EBELN/EBELP become purchase_order_id/purchase_order_item_id; VBELN/POSNR become delivery_id/delivery_item_id. MANDT remains part of the key as sap_client_id. | **Our field interpretation.** These are readable aliases, not proof of source-system semantics. |
 | 2026-10-11 | `candidate_order_item_count` | Implemented monthly population in Gold. | Count distinct order items attributable to a supplier and a closed reporting month, including items later excluded from scoring. | **Our metric definition**, not a raw source field or a count of all exported items. |
@@ -31,12 +31,13 @@ This register distinguishes source-field interpretations, chosen metric definiti
 | 2026-10-11 | `net_unit_price`, `net_order_value`, `currency_code` | NETPR/NETWR on EKPO and WAERS on EKKO. | Display source amounts and currency without conversion. | **Our field interpretation.** Price-unit factors are not supplied; do not reconstruct NETWR as quantity times NETPR or use NETPR for weighted metrics without clarification. |
 | 2026-10-11 | Gold operational datasets | Project owner's request to include purchasing and delivery basics. | Publish valid Silver order items, schedule lines and delivery items alongside performance results. Keep deleted orders flagged and future/open records visible. | **Requested design; our implementation choice.** These are valid Silver records, not the entire raw export. Quarantined records remain in Silver. |
 | 2026-10-11 | Catalog and readable names | Explicit project-owner request. | Use project/environment catalog, layer schemas and English Gold aliases. | **Confirmed technical requirement from the project owner**, not a confirmation of business meanings. |
+| 2026-10-11 | Dev/prod environment isolation | Project owner confirmed use of Free Edition, which allows one workspace per account. | Configure separate dev/prod catalogs in the same workspace for this demonstration. A prod target does not create a second workspace. | **Documented platform constraint.** Prefer separate workspaces for production, with separate deployment identities and source locations, plus catalog permissions and workspace-catalog bindings where applicable. See the README environment-isolation section. |
 | 2026-10-11 | Branch access groups | No approved employee-to-branch mapping has been supplied. | Default to an empty group mapping and no employee grants. A configured group only reads its matching branch rows. | **Security design.** Employee/group membership and branch ownership still require real information. |
 
 ## Bronze decisions
 
 - Preserve strings and leading zeros. Disable schema inference. Empty CSV fields may load as null.
-- Treat the seven input files as a complete snapshot and overwrite tables on every run. Snapshot completeness is an assumption; incremental exports and multi-extract history are not implemented.
+- Treat the seven SAP input files plus the branch reference as a complete snapshot and overwrite tables on every run. Snapshot completeness is an assumption; incremental exports and multi-extract history are not implemented.
 - Keep all source duplicates. Silver decides how duplicates and conflicting keys are handled.
 
 ## Silver rules
@@ -50,20 +51,20 @@ DATE types and string identifiers were project-owner decisions on 2026-10-09. Ot
 | Numbers | Decimal dot or comma; DECIMAL(38,6). | Assume no thousands separators. Mixed separators, overflow and more than six decimal places are rejected. |
 | Amounts and quantities | Reject negative numbers; MENGE and LFIMG must be positive. | Do not assume negative values are returns. Missing optional prices and WEMNG remain null. |
 | Exact duplicates | Collapse identical original source fields, independent of load time/file path. | `_source_occurrences` and `_source_files` preserve multiplicity and lineage. Bronze is unchanged. |
-| Conflicting keys | Quarantine all variants after text normalisation. | Do not choose an arbitrary latest record. Pure formatting variants can also conflict. |
+| Conflicting keys | For EKKO, select the unique latest AEDAT when all variants have valid dates. Archive older variants in superseded_records. Otherwise quarantine conflicting variants. | AEDAT is an authorised demo proxy, not a verified SAP change timestamp. Same-date ties and missing/invalid dates stay unresolved. Never select an older record merely because the newest fails validation. Other tables have no authorised version-date field. |
 | References | Join only unique valid Silver parents. | UNRESOLVED_REFERENCE means no usable parent, which can be absent or quarantined. |
 | Units | Compare EKPO.MEINS with MARA.MEINS and LIPS.MEINS with EKPO.MEINS. | Without conversion factors, quarantine mismatches even when different units could be legitimate. |
-| Material and branch | Match LIPS material and WERKS to EKPO, and LIPS.WERKS to LIKP. | No invented mapping of WERKS to cities. |
+| Material and branch | Match LIPS material and WERKS to EKPO, and LIPS.WERKS to LIKP. | Use the customer-supplied branch reference for Gold labels; unknown codes stay visible as UNMAPPED. |
 | Supplier | Validate EKKO/LIKP against LFA1; match supplier between order and delivery. | Assume LFA1/MARA apply to all MANDT values because those master files lack MANDT. |
 | Deletion flag | Blank LOEKZ means active; L means deleted; other flags are rejected. | Deleted items remain flagged in Silver and are excluded from performance scoring. |
 
-Candidate keys: LFA1: LIFNR; MARA: MATNR; EKKO: MANDT/EBELN; EKPO: MANDT/EBELN/EBELP; EKET: MANDT/EBELN/EBELP/ETENR; LIKP: MANDT/VBELN; LIPS: MANDT/VBELN/POSNR. These keys are not customer-confirmed.
+Candidate keys: LFA1: LIFNR; MARA: MATNR; EKKO: MANDT/EBELN; EKPO: MANDT/EBELN/EBELP; EKET: MANDT/EBELN/EBELP/ETENR; LIKP: MANDT/VBELN; LIPS: MANDT/VBELN/POSNR. The customer refers the five transactional tables to SAP-ECC standard keys and relationships. LFA1/MARA export keys remain dataset interpretations.
 
 Required fields beyond keys: LFA1.NAME1; MARA.MEINS; EKKO.LIFNR/BEDAT; EKPO.MATNR/MENGE/MEINS/WERKS; EKET.EINDT/MENGE; LIKP.LIFNR/WADAT_IST/WERKS; LIPS.EBELN/EBELP/MATNR/LFIMG/MEINS/WERKS. See `specs` in the Silver notebook. Requiring WADAT_IST makes the demonstration evaluable; it does not verify its business meaning.
 
-Silver outputs include seven valid source tables, `dev_quarantine` and `dev_load_summary`. Reconciliation is Bronze rows = removed duplicate rows + Silver rows + quarantine rows. A record can have several error reasons. All outputs are replaced separately; a failed run can leave a partial snapshot. Gold runs only after Silver succeeds.
+Silver outputs include seven valid SAP tables, `dev_branch_mapping`, `dev_quarantine`, `dev_superseded_records` and `dev_load_summary`. Reconciliation is Bronze rows = removed duplicate rows + Silver rows + quarantine rows + superseded rows. A record can have several error reasons. All outputs are replaced separately; a failed run can leave a partial snapshot. Gold runs only after Silver succeeds.
 
-## Gold performance rules
+## Legacy Gold supplier ranking (retained pending weighting decision)
 
 | Topic | Rule | Limitation |
 |---|---|---|
@@ -83,18 +84,37 @@ Silver outputs include seven valid source tables, `dev_quarantine` and `dev_load
 
 Rates range from 0 to 1. `evaluation_coverage_rate` = evaluated_order_item_count / candidate_order_item_count. It is not completeness of the whole export. All distinct Bronze item keys remain in internal item performance, including keys without month attribution. Excluded items with partial schedules can have provisional month attribution. Exclusion reasons can overlap.
 
+## Approved FIFO schedule evaluation (2026-10-11)
+
+Origin: project-owner approval of allocation and per-schedule evaluation. The customer asks us to choose and document a rule; the customer did not prescribe FIFO.
+
+- Partition by MANDT/EBELN/EBELP. Silver validates material, branch and matching units before Gold allocation. There is no cross-item or cross-unit matching.
+- Sort plans by EINDT then ETENR. Sort actual deliveries by WADAT_IST then VBELN/POSNR. Same-date ID ordering is deterministic, not evidence of real within-day sequence.
+- Allocate quantities to the oldest outstanding plan. A delivery may satisfy several plans; several deliveries may satisfy one plan. Early deliveries may fulfil future plans. Each quantity is used at most once. Unmatched excess is retained separately.
+- Allocate only actual deliveries on/before as_of_date, including late deliveries after a plan's month end. Such late quantities remain evidence but do not improve earlier monthly results. Future plans may receive early quantities, but open months have null KPIs.
+- `schedule_line_performance` has one distinct Bronze schedule key. Valid Silver schedules provide dates/quantities. Invalid schedules and parents remain excluded with reasons; unrecoverable dates imply no month attribution. No missing quantity on an excluded record is presented as verified zero.
+- Each plan's EINDT determines report_month. On time means its full schedule quantity is allocated by EINDT inclusive. In full means the full quantity is allocated by that month's end inclusive. No grace period. Fill rate and shortfall also use that month end.
+- Parent quality exclusions still apply, including deleted items, schedule/order quantity mismatch, related quarantine and dates before order date. The parent's final-month closure exclusion is removed and recalculated for each plan, so a future plan does not automatically exclude an earlier closed month.
+- `delivery_allocation_balance` preserves all valid delivery items and separates AFTER_CUTOFF, EXCLUDED_OR_NO_VALID_SCHEDULE, EXCESS_OVER_SCHEDULES and FULLY_ALLOCATED. Unallocated quantity on excluded items is not labelled overdelivery.
+- Limitations: inferred links, not physical delivery intent; final snapshot cannot reconstruct plan changes; WADAT_IST is a proxy for this evaluation; missing delivery implies zero only under the complete-export assumption. WEMNG is never added to LFIMG.
+- Supplier weighting is not yet approved. Existing `supplier_monthly`, `worst_suppliers` and order-item results retain their previous logic and are labelled LEGACY_ORDER_ITEM_FINAL_DATE. The review explicitly separates old rankings from new FIFO schedule results. No new weighted supplier ranking is implied.
+- Local verification executes the actual allocation SQL using SQLite window functions: eight cases including 50 random quantity conservation trials. SQLite is not Spark decimal validation. Production code additionally checks quantity bounds before publishing; full Databricks execution remains pending.
+
 ## Gold datasets
 
 All names below are prefixed with `dev_` in dev and published in `dev_gold_views`; physical backing tables use the same names in `dev_gold_data`.
 
 | Name suffix | Grain and contents |
 |---|---|
-| supplier_monthly | Supplier/month/scope/branch rates, score, item counts, coverage and ranking eligibility. |
+| supplier_monthly | Legacy final-date supplier/month/scope/branch rates; metric_basis labels the retained method. |
 | worst_suppliers | Up to three eligible suppliers per month/scope/branch. |
 | order_item_performance | One candidate order item, quantities, dates, score flags and exclusion reasons. |
 | delivery_evidence | Valid delivery items linked to performance, including later deliveries and temporal flags. |
 | purchase_order_items | Valid Silver purchase order items with supplier, branch, order date, material, quantity, unit, source amounts/currency and deletion flag. No performance cutoff filter. |
 | delivery_items | Valid Silver delivery items with linked purchasing/supplier context. No performance cutoff filter. |
+| delivery_allocations | Inferred FIFO intersections: order item, schedule ID, delivery ID/item, dates, allocated quantity and rule. |
+| schedule_line_performance | One Bronze schedule key; per-plan month, quantities, on-time/in-full/fill-rate results and exclusions. |
+| delivery_allocation_balance | One valid delivery item; allocated/unallocated quantity and status, including post-cutoff records. |
 | schedule_lines | Valid Silver schedules linked to their order item, supplier and branch. Kept separate to prevent fan-out. |
 | quality_summary | Counts by evaluation/exclusion reason, plus unassigned quarantine counts. Central access only. |
 | unassigned_quarantine | Unassignable EKPO/EKET/LIPS quarantine with raw records and reasons. Central access only. |
@@ -108,4 +128,12 @@ For each change record date, rule, observed evidence, decision, origin (`our int
 
 ## Landing Zone decision (2026-10-11)
 
-Origin: explicit project-owner instruction. Use the uploaded Workspace folder as Bronze input. This is a confirmed technical path choice, not confirmation of business semantics or export completeness. The input parser reads semicolon-delimited UTF-8 (optional BOM), accepts quoted fields, keeps strings and duplicates, and maps empty fields to null. Malformed rows fail before Bronze writes. The seven expected CSV names are unchanged; other files are ignored. The uploaded files are the active input; repository fixtures are for local exploration.
+Origin: explicit project-owner instruction. Use the uploaded Workspace folder as Bronze input. This is a confirmed technical path choice, not confirmation of business semantics or export completeness. The input parser reads semicolon-delimited UTF-8 (optional BOM), accepts quoted fields, keeps strings and duplicates, and maps empty fields to null. Malformed rows fail before Bronze writes. The seven SAP CSV names are unchanged; BRANCH_MAPPING.csv is also required. Other files are ignored. The uploaded files are the active input; repository fixtures are for local exploration.
+
+## Customer reply and approved implementation (2026-10-11)
+
+- The project owner moved BRANCH_MAPPING.csv to `../DIC_Arbeitsprobe_Testdaten_SAP_MM/BRANCH_MAPPING.csv` and reports uploading it to Databricks file 1425123894552547. There is no duplicate reference copy in this repository. Bronze still reads the filename from the configured Workspace Landing folder; the web editor URL is not a filesystem path. The upload location could not be independently verified because the supplied link required sign-in.
+- Gold publishes `branch_mapping` and adds `branch_name` plus `branch_mapping_status` to branch-bearing datasets. Left joins preserve unmapped codes and ALL scope. Invalid reference rows stop Gold before publication. This name mapping grants no employee permissions.
+- Local EKKO evidence: 216 rows; 184 distinct valid AEDAT dates, 2025-01-09 to 2026-06-30; no missing/invalid AEDAT. Six conflicting keys each differ only in EKGRP and AEDAT. Each has a unique latest date. These observations support the owner's authorised synthetic-case proxy, not a claim about production SAP semantics.
+- Superseded records retain raw content, provenance, old/selected dates and the rule LATEST_AEDAT_DEMO_PROXY. They are not quality failures and do not invalidate current parents. Current-state selection cannot reconstruct the state known at historical month end.
+- Customer states no actual-to-planned-delivery linkage or fixed allocation rule exists. The project owner subsequently approved FIFO and schedule-level evaluation; these are now implemented as detailed above. Supplier weighting remains pending.
