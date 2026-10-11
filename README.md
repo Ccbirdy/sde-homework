@@ -169,11 +169,19 @@ Local tests: `.venv/Scripts/python.exe -m unittest discover -s tests -v`. These 
 
 Only the Workspace folder remains the active Landing Zone. The user moved the local mapping into `../DIC_Arbeitsprobe_Testdaten_SAP_MM/` and reported uploading it. The editor URL does not establish its parent folder; Bronze requires the CSV inside the configured source_path.
 
-This change removes the `landing_files` Volume and `landing_schema` declarations. An existing deployment had `prevent_destroy: true`; deleting the YAML alone is not proof of cloud deletion and may be blocked by deployed lifecycle state. Before deploying this removal, use the previous Bundle configuration (which still defines these resources) and unlink only these two keys:
+This change removes the `landing_files` Volume and `landing_schema` declarations. Until they are unbound, the remote Bundle state still schedules them for deletion. In GitHub Actions, that destructive plan fails because the runner cannot answer the confirmation prompt. Do not enable blanket `--auto-approve` to work around this migration.
+
+Recommended one-time sequence:
+
+1. Push the updated workflow and helper script. Start a **new** `Deploy Databricks` run, choose `dev`, and enable `unbind_unused_dev_landing`. Re-running the previous failed workflow uses its old code and does not apply this fix.
+2. The helper temporarily restores just the two old resource definitions in the existing Bundle root, unbinds the Volume first and schema second, and restores the original configuration even on failure. The workflow stops on any unbind error; successful unbinds are remote state changes and are not rolled back. It then validates and deploys without auto-approving deletions.
+3. After deployment succeeds, run `databricks/migrations/remove_unused_dev_landing.py` once in Databricks. It checks the Volume is empty and drops the schema with RESTRICT. The active Workspace Landing CSVs are untouched.
+4. Leave the one-time option unchecked for subsequent deployments. The migration is limited to dev; choosing prod with it enabled fails before unbinding.
+
+Local alternative, from the repository root with Databricks authentication configured:
 
 ```powershell
-databricks bundle deployment unbind landing_files -t dev
-databricks bundle deployment unbind landing_schema -t dev
+python scripts/unbind_unused_dev_landing.py
 ```
 
-Unbind removes management state, not data ([Databricks CLI documentation](https://docs.databricks.com/aws/en/dev-tools/cli/bundle-commands)). Then run `databricks/migrations/remove_unused_dev_landing.py` once in Databricks. It refuses to drop a nonempty Volume and uses RESTRICT for the schema; it never touches the Workspace Landing CSVs. The migration is not included in recurring jobs. Deploy the new Bundle afterwards. No cloud deletion or deployment was performed from this local change because the browser session required sign-in. Prod is not targeted by the dev cleanup script.
+The helper selects the correct Bundle directory itself. No checkout of an old revision is needed. Unbind removes management state, not data ([Databricks CLI documentation](https://docs.databricks.com/aws/en/dev-tools/cli/bundle-commands)). If an unbind fails, review the error before retrying, particularly after a partially successful migration. No cloud deletion, unbind or deployment was performed while preparing this local fix.

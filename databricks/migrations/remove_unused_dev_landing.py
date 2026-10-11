@@ -1,7 +1,7 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # One-time removal of the unused dev Landing Volume
-# MAGIC Run only after unbinding landing_files and landing_schema from the old Bundle configuration.
+# MAGIC Run after the one-time dev unbind migration and successful deployment.
 # MAGIC This notebook is deliberately not part of the recurring processing job.
 # MAGIC The active /Workspace Landing folder and its CSV files are not touched.
 

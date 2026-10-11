@@ -12,6 +12,11 @@ on:
         options:
           - dev
           - prod
+      unbind_unused_dev_landing:
+        description: One-time dev migration - unbind unused Landing resources before deployment
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -31,6 +36,20 @@ jobs:
         uses: databricks/setup-cli@main
         with:
           version: '1.20.0'
+
+      - name: Unbind unused dev Landing resources
+        if: ${{ inputs.unbind_unused_dev_landing }}
+        env:
+          DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          DATABRICKS_AUTH_TYPE: pat
+          BUNDLE_TARGET: ${{ inputs.target }}
+        run: |
+          if [ "$BUNDLE_TARGET" != "dev" ]; then
+            echo "The Landing migration is limited to dev. No resources were changed."
+            exit 1
+          fi
+          python scripts/unbind_unused_dev_landing.py
 
       - name: Deploy bundle
         working-directory: databricks
