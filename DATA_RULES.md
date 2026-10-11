@@ -8,7 +8,7 @@ For dev, the catalog is `supplier_performance_dev`; schemas are `dev_bronze`, `d
 
 | Layer | Purpose |
 |---|---|
-| Landing | Seven original SAP CSV files plus BRANCH_MAPPING.csv manually uploaded to `/Workspace/Users/guochengcheng93@gmail.com/landing_zone_case_solution`. Unused Landing Volume/schema definitions have been removed. Cloud deletion still requires the one-time migration; no authenticated cloud session was available during this change. |
+| Landing | Seven original SAP CSV files plus BRANCH_MAPPING.csv manually uploaded to `/Workspace/Users/guochengcheng93@gmail.com/landing_zone_case_solution`. Local originals are kept in `../DIC_Arbeitsprobe_Testdaten_SAP_MM/`; no duplicate source folder is maintained in this repository. |
 | Bronze | Source fields as strings, plus source file and load time. Keep source duplicates. |
 | Silver | Typed, validated records, quarantine and load reconciliation. Keep SAP field names for traceability. |
 | Gold data | Physical Delta results and operational datasets, with English column names. Restricted to the processing identity and administrators. |
@@ -23,9 +23,9 @@ This register distinguishes source-field interpretations, chosen metric definiti
 | 2026-10-11 | `WERKS` to `branch_code` | Customer reply supplied four branches. | 2000 Hamburg; 2100 Bremen; 2200 Hannover; 2300 Rostock. Store in BRANCH_MAPPING.csv, validate in Silver and left-join in Gold. | **Customer-confirmed mapping.** Employee/group membership remains separate and unconfirmed. |
 | 2026-10-11 | `LIFNR` to `supplier_id`; `NAME1` to `supplier_name` | Supplier master and header joins in this dataset. | Preserve the source identifier as text and use its master name. Identical names do not merge different IDs. | **Our field interpretation.** Confirm identifier scope and master-data semantics. |
 | 2026-10-11 | Order and delivery aliases | Source table names and existing joins. | EBELN/EBELP become purchase_order_id/purchase_order_item_id; VBELN/POSNR become delivery_id/delivery_item_id. MANDT remains part of the key as sap_client_id. | **Our field interpretation.** These are readable aliases, not proof of source-system semantics. |
-| 2026-10-11 | `candidate_order_item_count` | Implemented monthly population in Gold. | Count distinct order items attributable to a supplier and a closed reporting month, including items later excluded from scoring. | **Our metric definition**, not a raw source field or a count of all exported items. |
-| 2026-10-11 | `evaluated_order_item_count` | Gold exclusion rules. | Candidate items with no performance exclusion reason. | **Our metric definition.** Confirm the exclusion policy with the business. |
-| 2026-10-11 | `excluded_order_item_count` | Difference between candidate and evaluated counts. | candidate_order_item_count minus evaluated_order_item_count. | **Our metric definition.** It excludes records that cannot be attributed to a supplier/month in the first place. |
+| 2026-10-11 | `candidate_schedule_line_count` | Implemented monthly population in Gold. | Count distinct schedule keys attributable to a supplier and a closed scheduled month, including plans excluded from scoring. No month attribution means outside this denominator. | **Our metric definition**, not a raw source field or a count of all exported items. |
+| 2026-10-11 | `evaluated_schedule_line_count` | Gold exclusion rules. | Candidate schedule lines with no performance exclusion reason. | **Our metric definition.** Confirm the exclusion policy with the business. |
+| 2026-10-11 | `excluded_schedule_line_count` | Difference between candidate and evaluated counts. | candidate_schedule_line_count minus evaluated_schedule_line_count. | **Our metric definition.** It excludes records that cannot be attributed to a supplier/month in the first place. |
 | 2026-10-11 | `actual_delivery_date` from WADAT_IST | Existing provisional delivery logic. | Use this date for the demonstration. | **Unconfirmed and material.** It may describe goods issue rather than arrival at the customer. The English alias does not resolve this uncertainty. |
 | 2026-10-11 | `delivered_quantity` from LFIMG | Existing delivery-item logic. | Use LFIMG as the delivered quantity, with matching units. | **Our unconfirmed interpretation.** Confirm receipt, reversals and completeness of the extract. |
 | 2026-10-11 | `net_unit_price`, `net_order_value`, `currency_code` | NETPR/NETWR on EKPO and WAERS on EKKO. | Display source amounts and currency without conversion. | **Our field interpretation.** Price-unit factors are not supplied; do not reconstruct NETWR as quantity times NETPR or use NETPR for weighted metrics without clarification. |
@@ -64,25 +64,25 @@ Required fields beyond keys: LFA1.NAME1; MARA.MEINS; EKKO.LIFNR/BEDAT; EKPO.MATN
 
 Silver outputs include seven valid SAP tables, `dev_branch_mapping`, `dev_quarantine`, `dev_superseded_records` and `dev_load_summary`. Reconciliation is Bronze rows = removed duplicate rows + Silver rows + quarantine rows + superseded rows. A record can have several error reasons. All outputs are replaced separately; a failed run can leave a partial snapshot. Gold runs only after Silver succeeds.
 
-## Legacy Gold supplier ranking (retained pending weighting decision)
+## Gold supplier ranking: equal schedule-line weights (approved 2026-10-12)
 
 | Topic | Rule | Limitation |
 |---|---|---|
 | Cutoff | `as_of_date`, initially 2026-09-30; include only closed months. | Demo assumption, not a confirmed extract cutoff. Input must cover deliveries through that date. |
-| Grain and month | One MANDT/EBELN/EBELP item; final valid EKET.EINDT determines report_month. | Earlier schedule deadlines are not scored separately. |
+| Grain and month | One MANDT/EBELN/EBELP/ETENR plan; its own EKET.EINDT determines report_month. | Invalid schedules without a usable date cannot be assigned a month. |
 | Ordered quantity | EKPO.MENGE must equal the sum of EKET.MENGE. | Exclude mismatches; no automatic correction or tolerance. |
-| Deliveries | Sum valid LFIMG by the relevant date, using WADAT_IST. | Do not add WEMNG as extra delivery quantity. Delivery-date meaning remains open. |
-| Partial/over-delivery | Aggregate before joins; over-delivery counts as complete; fill rate capped at 1. | No allocation to individual schedule lines. |
-| On time | Full ordered quantity delivered by the final scheduled date, inclusive. | Zero-day tolerance. A late complete delivery is still late. |
-| In full | Full ordered quantity delivered by reporting month end, inclusive. | Later deliveries do not change earlier monthly scores. |
+| Deliveries | Use FIFO-allocated LFIMG quantities by the relevant date, using WADAT_IST. | Do not add WEMNG as extra delivery quantity. Delivery-date meaning remains open. |
+| Partial/over-delivery | FIFO allocates each delivered quantity at most once; plan allocation cannot exceed its quantity. | Unallocated excess is reported separately. |
+| On time | Full schedule quantity allocated by its own scheduled date, inclusive. | Zero-day tolerance. A late complete delivery is still late. |
+| In full | Full schedule quantity allocated by its own reporting month end, inclusive. | Later deliveries do not change earlier monthly scores. |
 | Exclusions | Invalid/deleted items, missing schedules, quantity mismatch, schedules/deliveries before order date, or attributable EKPO/EKET/LIPS quarantine. | Invalid LIKP records already quarantine dependent LIPS records in Silver. Excluded items have null KPI values. |
 | No delivery row | Use quantity zero for an otherwise evaluable item without attributable quarantine. | Valid only under the complete-export assumption. Unassigned quarantine is additional uncertainty. |
-| Monthly rates | Proportion of evaluated items on time/in full; also mean capped quantity fill rate. | Equal item weights; no cross-unit quantity sum and no monetary weighting. |
-| Score and ranking | Mean of on_time_rate and in_full_rate, ascending. | Ties: lower on-time rate, lower in-full rate, more evaluated items, then supplier ID. The final ID ordering is deterministic, not a performance difference. |
-| Minimum sample | `min_items` remains 1 per supplier, month and scope. | Small samples have limited reliability. Fewer than three eligible suppliers yield fewer places. The local preview found no candidates at thresholds 10 or 20; Gold counts remain the decision basis. |
+| Monthly rates | Proportion of evaluated schedule lines on time/in full; also mean schedule fill rate. | One vote per plan, independent of quantity, value or number of plans on the parent item; more plans mean more votes. |
+| Score and ranking | Mean of on_time_rate and in_full_rate, ascending. | Ties: lower on-time rate, lower in-full rate, more evaluated schedule lines, then supplier ID. The final ID ordering is deterministic, not a performance difference. |
+| Minimum sample | `min_items` remains the parameter name, but now means minimum evaluated schedule lines (default 1) per supplier, month and scope. | Small samples have limited reliability. Fewer than three eligible suppliers yield fewer places. The local preview found no candidates at thresholds 10 or 20; Gold counts remain the decision basis. |
 | Reporting scope | ALL is recalculated across branches; BRANCH is recalculated per WERKS. | Never filter a company aggregate and claim it is a branch aggregate. |
 
-Rates range from 0 to 1. `evaluation_coverage_rate` = evaluated_order_item_count / candidate_order_item_count. It is not completeness of the whole export. All distinct Bronze item keys remain in internal item performance, including keys without month attribution. Excluded items with partial schedules can have provisional month attribution. Exclusion reasons can overlap.
+Rates range from 0 to 1. `evaluation_coverage_rate` = evaluated_schedule_line_count / candidate_schedule_line_count. It is not completeness of the whole export; order items with no schedule and schedules without month/supplier attribution are not in this denominator. All distinct Bronze item keys remain in internal item performance, including keys without month attribution. Excluded items with partial schedules can have provisional month attribution. Exclusion reasons can overlap.
 
 ## Approved FIFO schedule evaluation (2026-10-11)
 
@@ -97,7 +97,7 @@ Origin: project-owner approval of allocation and per-schedule evaluation. The cu
 - Parent quality exclusions still apply, including deleted items, schedule/order quantity mismatch, related quarantine and dates before order date. The parent's final-month closure exclusion is removed and recalculated for each plan, so a future plan does not automatically exclude an earlier closed month.
 - `delivery_allocation_balance` preserves all valid delivery items and separates AFTER_CUTOFF, EXCLUDED_OR_NO_VALID_SCHEDULE, EXCESS_OVER_SCHEDULES and FULLY_ALLOCATED. Unallocated quantity on excluded items is not labelled overdelivery.
 - Limitations: inferred links, not physical delivery intent; final snapshot cannot reconstruct plan changes; WADAT_IST is a proxy for this evaluation; missing delivery implies zero only under the complete-export assumption. WEMNG is never added to LFIMG.
-- Supplier weighting is not yet approved. Existing `supplier_monthly`, `worst_suppliers` and order-item results retain their previous logic and are labelled LEGACY_ORDER_ITEM_FINAL_DATE. The review explicitly separates old rankings from new FIFO schedule results. No new weighted supplier ranking is implied.
+- Superseded on 2026-10-12: the owner approved equal schedule-line weights. `supplier_monthly` and `worst_suppliers` now use FIFO schedule results, labelled FIFO_SCHEDULE_LINE_EQUAL_WEIGHT. Only `order_item_performance` and `delivery_evidence` retain legacy final-date logic as auxiliary comparison evidence; they do not feed supplier ranking.
 - Local verification executes the actual allocation SQL using SQLite window functions: eight cases including 50 random quantity conservation trials. SQLite is not Spark decimal validation. Production code additionally checks quantity bounds before publishing; full Databricks execution remains pending.
 
 ## Gold datasets
@@ -106,9 +106,9 @@ All names below are prefixed with `dev_` in dev and published in `dev_gold_views
 
 | Name suffix | Grain and contents |
 |---|---|
-| supplier_monthly | Legacy final-date supplier/month/scope/branch rates; metric_basis labels the retained method. |
+| supplier_monthly | FIFO supplier/month/scope/branch rates with equal schedule-line weights, explicit schedule counts and metric_basis. |
 | worst_suppliers | Up to three eligible suppliers per month/scope/branch. |
-| order_item_performance | One candidate order item, quantities, dates, score flags and exclusion reasons. |
+| order_item_performance | Auxiliary legacy final-date result per candidate order item; not used in supplier ranking. |
 | delivery_evidence | Valid delivery items linked to performance, including later deliveries and temporal flags. |
 | purchase_order_items | Valid Silver purchase order items with supplier, branch, order date, material, quantity, unit, source amounts/currency and deletion flag. No performance cutoff filter. |
 | delivery_items | Valid Silver delivery items with linked purchasing/supplier context. No performance cutoff filter. |
@@ -116,7 +116,7 @@ All names below are prefixed with `dev_` in dev and published in `dev_gold_views
 | schedule_line_performance | One Bronze schedule key; per-plan month, quantities, on-time/in-full/fill-rate results and exclusions. |
 | delivery_allocation_balance | One valid delivery item; allocated/unallocated quantity and status, including post-cutoff records. |
 | schedule_lines | Valid Silver schedules linked to their order item, supplier and branch. Kept separate to prevent fan-out. |
-| quality_summary | Counts by evaluation/exclusion reason, plus unassigned quarantine counts. Central access only. |
+| quality_summary | Counts of schedule keys by evaluation/exclusion reason, plus unassigned quarantine record counts. Central access only. |
 | unassigned_quarantine | Unassignable EKPO/EKET/LIPS quarantine with raw records and reasons. Central access only. |
 
 `as_of_date` records the evaluation cutoff, not a filter on the operational datasets. `processed_at` records write time. Writes are not a cross-table transaction; multiple extracts are not historised. The business-facing views enforce branch access but do not turn the provisional business rules into confirmed facts.
@@ -132,12 +132,13 @@ Origin: explicit project-owner instruction. Use the uploaded Workspace folder as
 
 ## Customer reply and approved implementation (2026-10-11)
 
-- The project owner moved BRANCH_MAPPING.csv to `../DIC_Arbeitsprobe_Testdaten_SAP_MM/BRANCH_MAPPING.csv` and reports uploading it to Databricks file 1425123894552547. There is no duplicate reference copy in this repository. Bronze still reads the filename from the configured Workspace Landing folder; the web editor URL is not a filesystem path. The upload location could not be independently verified because the supplied link required sign-in.
+- The branch reference is stored locally at `../DIC_Arbeitsprobe_Testdaten_SAP_MM/BRANCH_MAPPING.csv` and uploaded to the Workspace Landing folder by the project owner. Bronze reads it from the configured source_path.
 - Gold publishes `branch_mapping` and adds `branch_name` plus `branch_mapping_status` to branch-bearing datasets. Left joins preserve unmapped codes and ALL scope. Invalid reference rows stop Gold before publication. This name mapping grants no employee permissions.
 - Local EKKO evidence: 216 rows; 184 distinct valid AEDAT dates, 2025-01-09 to 2026-06-30; no missing/invalid AEDAT. Six conflicting keys each differ only in EKGRP and AEDAT. Each has a unique latest date. These observations support the owner's authorised synthetic-case proxy, not a claim about production SAP semantics.
 - Superseded records retain raw content, provenance, old/selected dates and the rule LATEST_AEDAT_DEMO_PROXY. They are not quality failures and do not invalidate current parents. Current-state selection cannot reconstruct the state known at historical month end.
-- Customer states no actual-to-planned-delivery linkage or fixed allocation rule exists. The project owner subsequently approved FIFO and schedule-level evaluation; these are now implemented as detailed above. Supplier weighting remains pending.
+- Customer states no actual-to-planned-delivery linkage or fixed allocation rule exists. The project owner subsequently approved FIFO and schedule-level evaluation; these are now implemented as detailed above. Supplier weighting was subsequently approved on 2026-10-12: equal schedule-line weights.
 
-## Landing deployment-state migration (2026-10-11)
 
-The reported GitHub Actions run validated and uploaded files, then stopped at a destructive-plan prompt for landing_schema and landing_files. Upload completion is not deployment completion. Added an explicit, default-off, dev-only workflow option `unbind_unused_dev_landing` that calls the scoped helper before deployment. The helper restores just those two resource definitions temporarily for unbinding and restores the original config on both success and failure. It never executes a delete or deploy. Actual object deletion remains in the separate empty-Volume cleanup notebook after successful deployment. Broad automatic approval is not added to normal deployment. Local success/failure restoration tests use a mocked CLI; remote unbind remains unverified until run by the user.
+## Equal schedule-line weighting decision (2026-10-12)
+
+Origin: explicit project-owner agreement that every promised delivery has one vote. Nine on-time plans and one late plan produce 90% on-time, even if nine plans belong to one order item. Supplier monthly score remains the arithmetic mean of on-time and in-full rates (50% each). Excluded plans have null KPIs and are outside the rate denominator. ALL scope is recomputed from individual plans, not an average of branch percentages. Sample threshold, coverage, report cards, trend weights and ranking evidence now consistently use schedule lines. Public count columns changed to candidate_schedule_line_count, evaluated_schedule_line_count, excluded_schedule_line_count and minimum_schedule_line_count. Run the full Gold job and deploy the updated review notebook together; consumers using old order-count names must be updated.

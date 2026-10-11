@@ -14,7 +14,7 @@ Workspace CSV landing folder
 
 All four schemas are in `supplier_performance_dev`. Prod uses `supplier_performance_prod` and the `prod_` prefix. Gold data stores the actual records; Gold views read those records and apply access predicates without making a second copy. Processing identities and administrators maintain the tables. Employees query only the views.
 
-The active landing folder is `/Workspace/Users/guochengcheng93@gmail.com/landing_zone_case_solution`. The unused Landing Volume and schema have been removed from the Bundle configuration. Existing cloud resources require the one-time cleanup described below. Configure `source_path` in [databricks.yml](databricks/databricks.yml) to use another Workspace folder. Dev and prod currently share the demonstration input.
+The active landing folder is `/Workspace/Users/guochengcheng93@gmail.com/landing_zone_case_solution`. Configure `source_path` in [databricks.yml](databricks/databricks.yml) to use another Workspace folder. Dev and prod currently share the demonstration input. Local exploration reads `../DIC_Arbeitsprobe_Testdaten_SAP_MM/`; the repository does not keep a second CSV copy.
 
 | Code | Responsibility |
 |---|---|
@@ -88,14 +88,14 @@ Example, using the querying user's own identity:
 
 ```sql
 SELECT report_month, branch_code, supplier_id, supplier_name,
-       evaluated_order_item_count, evaluation_coverage_rate,
+       evaluated_schedule_line_count, evaluation_coverage_rate,
        on_time_rate, in_full_rate, performance_score
 FROM supplier_performance_dev.dev_gold_views.dev_supplier_monthly
 WHERE report_month = DATE '2026-09-01'
 ORDER BY performance_score, supplier_id;
 ```
 
-For the retained legacy supplier ranking, the score is the mean of the on-time and in-full rates. Each evaluated order item has equal weight; amounts and quantities do not weight the ranking. On time means complete by the final scheduled date, while in full means complete by reporting month end. Lower scores are worse. Rates are stored between 0 and 1.
+For the FIFO schedule-line supplier ranking, the score is the mean of the on-time and in-full rates. Each evaluated schedule line has equal weight; amounts and quantities do not weight the ranking. On time means the full schedule quantity allocated by its own scheduled date, while in full means complete by reporting month end. Lower scores are worse. Rates are stored between 0 and 1.
 
 The minimum sample remains **1 evaluated item per supplier/month/scope**. Small samples can produce extreme scores. The local source preview found no eligible candidate populations at thresholds 10 or 20; actual Gold evaluated counts are the basis for choosing the threshold. Do not interpret the weakest-three output as a reliable long-term supplier judgement without reviewing sample size, exclusions and the unconfirmed delivery-date semantics. The report computes the current conclusion from the loaded snapshot; this README does not hard-code a winning or losing supplier.
 
@@ -155,33 +155,12 @@ The cost notebook supports `demo` (synthetic usage/prices) and `live` (billing s
 
 Gold adds customer-confirmed branch names from Landing -> Bronze -> Silver and publishes a protected `branch_mapping` view. Unknown codes remain visible with `branch_mapping_status = UNMAPPED`. Existing access controls continue to use branch codes.
 
-Silver uses EKKO.AEDAT as an explicitly authorised synthetic-case version proxy. Six local conflicting keys have unique latest dates. Older rows go to `dev_superseded_records`; unresolved ties and missing dates remain quarantined. No date proxy is applied to other SAP tables. Reconciliation includes the new `superseded_rows` column. FIFO delivery allocation and per-schedule evaluation have since been approved and implemented. Supplier weighting remains pending; existing supplier rankings are explicitly labelled legacy final-date results.
+Silver uses EKKO.AEDAT as an explicitly authorised synthetic-case version proxy. Six local conflicting keys have unique latest dates. Older rows go to `dev_superseded_records`; unresolved ties and missing dates remain quarantined. No date proxy is applied to other SAP tables. Reconciliation includes the new `superseded_rows` column. FIFO delivery allocation and per-schedule evaluation have since been approved and implemented. On 2026-10-12 the owner approved equal schedule-line weights; supplier rankings now use FIFO schedule results.
 
 ## FIFO schedule evaluation
 
 Gold now adds `delivery_allocations`, `schedule_line_performance` and `delivery_allocation_balance`. Plans are ordered by due date and plan ID; deliveries by actual date and delivery IDs within each order item. Quantities are split as needed without double counting. Each plan uses its own due date for on-time status and its own month end for in-full status. See DATA_RULES.md for cutoff, exclusion, excess and early-delivery handling.
 
-Supplier aggregation weights remain undecided. Existing monthly rankings retain the old final-date method, carry `metric_basis = LEGACY_ORDER_ITEM_FINAL_DATE`, and are explicitly separated from FIFO detail in the review notebook. Do not present them as the new schedule-based ranking.
+Supplier rankings use equal schedule-line weights, with `metric_basis = FIFO_SCHEDULE_LINE_EQUAL_WEIGHT`. Counts, minimum sample threshold (`min_items`), coverage and trends use schedule lines. The score still averages on-time and in-full rates with 50% each. Auxiliary order_item_performance and delivery_evidence retain legacy final-date results for comparison only; ranking evidence uses schedule_line_performance and delivery_allocations. Redeploy the review and rerun Gold together because public sample-count columns now end in schedule_line_count instead of order_item_count.
 
 Local tests: `.venv/Scripts/python.exe -m unittest discover -s tests -v`. These execute the production allocation SQL using SQLite and do not replace a Databricks Spark run.
-
-## One-time removal of the unused Landing Volume
-
-Only the Workspace folder remains the active Landing Zone. The user moved the local mapping into `../DIC_Arbeitsprobe_Testdaten_SAP_MM/` and reported uploading it. The editor URL does not establish its parent folder; Bronze requires the CSV inside the configured source_path.
-
-This change removes the `landing_files` Volume and `landing_schema` declarations. Until they are unbound, the remote Bundle state still schedules them for deletion. In GitHub Actions, that destructive plan fails because the runner cannot answer the confirmation prompt. Do not enable blanket `--auto-approve` to work around this migration.
-
-Recommended one-time sequence:
-
-1. Push the updated workflow and helper script. Start a **new** `Deploy Databricks` run, choose `dev`, and enable `unbind_unused_dev_landing`. Re-running the previous failed workflow uses its old code and does not apply this fix.
-2. The helper temporarily restores just the two old resource definitions in the existing Bundle root, unbinds the Volume first and schema second, and restores the original configuration even on failure. The workflow stops on any unbind error; successful unbinds are remote state changes and are not rolled back. It then validates and deploys without auto-approving deletions.
-3. After deployment succeeds, run `databricks/migrations/remove_unused_dev_landing.py` once in Databricks. It checks the Volume is empty and drops the schema with RESTRICT. The active Workspace Landing CSVs are untouched.
-4. Leave the one-time option unchecked for subsequent deployments. The migration is limited to dev; choosing prod with it enabled fails before unbinding.
-
-Local alternative, from the repository root with Databricks authentication configured:
-
-```powershell
-python scripts/unbind_unused_dev_landing.py
-```
-
-The helper selects the correct Bundle directory itself. No checkout of an old revision is needed. Unbind removes management state, not data ([Databricks CLI documentation](https://docs.databricks.com/aws/en/dev-tools/cli/bundle-commands)). If an unbind fails, review the error before retrying, particularly after a partially successful migration. No cloud deletion, unbind or deployment was performed while preparing this local fix.

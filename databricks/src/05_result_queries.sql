@@ -2,10 +2,10 @@
 -- MAGIC %md
 -- MAGIC # Supplier performance
 -- MAGIC Monthly purchasing results by month and branch.
--- MAGIC On time: fully delivered by the final scheduled date. In full: fully delivered by month end.
+-- MAGIC On time: each plan fully allocated by its own scheduled date. In full: fully delivered by month end.
 -- MAGIC The performance_score is the mean of both rates; lower values are worse.
--- MAGIC Rankings above use the LEGACY final-date method pending a weighting decision.
--- MAGIC New FIFO schedule-line results and quantity balances are shown separately below. See DATA_RULES.md.
+-- MAGIC Each evaluable schedule line has one equal vote in supplier rates and ranking.
+-- MAGIC FIFO schedule-line evidence and quantity balances are shown below. See DATA_RULES.md.
 -- MAGIC This review reads protected Gold views without changing business data.
 
 -- COMMAND ----------
@@ -43,11 +43,11 @@
 -- MAGIC  WHERE report_month = CAST(:report_month AS DATE) AND """ + scope_filter,
 -- MAGIC  args=selection).orderBy("worst_supplier_rank").collect()
 -- MAGIC 
--- MAGIC n = sum(r.evaluated_order_item_count for r in monthly)
--- MAGIC candidates = sum(r.candidate_order_item_count for r in monthly)
+-- MAGIC n = sum(r.evaluated_schedule_line_count for r in monthly)
+-- MAGIC candidates = sum(r.candidate_schedule_line_count for r in monthly)
 -- MAGIC def weighted(field):
--- MAGIC     return sum(float(r[field]) * r.evaluated_order_item_count for r in monthly
--- MAGIC                if r[field] is not None and r.evaluated_order_item_count > 0) / n if n else None
+-- MAGIC     return sum(float(r[field]) * r.evaluated_schedule_line_count for r in monthly
+-- MAGIC                if r[field] is not None and r.evaluated_schedule_line_count > 0) / n if n else None
 -- MAGIC 
 -- MAGIC def pct(value):
 -- MAGIC     return f"{float(value):.1%}" if value is not None else "not evaluable"
@@ -60,27 +60,27 @@
 -- MAGIC     f'<td style="padding:8px">{pct(r.on_time_rate)}</td>'
 -- MAGIC     f'<td style="padding:8px">{pct(r.in_full_rate)}</td>'
 -- MAGIC     f'<td style="padding:8px">{pct(r.performance_score)}</td>'
--- MAGIC     f'<td style="padding:8px">{r.evaluated_order_item_count}</td>'
+-- MAGIC     f'<td style="padding:8px">{r.evaluated_schedule_line_count}</td>'
 -- MAGIC     f'<td style="padding:8px">{pct(r.evaluation_coverage_rate)}</td></tr>' for r in worst
 -- MAGIC )
 -- MAGIC notice = ('No monthly data in this selection.' if not monthly else
--- MAGIC           'No evaluable order items.' if not n else
+-- MAGIC           'No evaluable schedule lines.' if not n else
 -- MAGIC           'No suppliers meet the minimum sample size for ranking.' if not worst else
--- MAGIC           'Ranking covers evaluable order items. Check sample size and coverage.')
+-- MAGIC           'Ranking covers evaluable schedule lines. Check sample size and coverage.')
 -- MAGIC if len(cutoffs) > 1:
 -- MAGIC     notice += ' Mixed cutoff dates: check the data snapshot.'
 -- MAGIC displayHTML(f"""
 -- MAGIC <div style="font-family:Arial,sans-serif;padding:24px;background:#f4f7fb;color:#17344b">
 -- MAGIC <h1>Supplier performance · {month:%Y-%m}</h1>
--- MAGIC <p>Legacy order-item ranking. New FIFO schedule results are separate; supplier weighting is pending.</p>
+-- MAGIC <p>FIFO schedule-line ranking. Each evaluable scheduled delivery has equal weight.</p>
 -- MAGIC <p>Branch: {escape(selection['branch'])} · Cutoff: {escape(', '.join(cutoffs) or 'no snapshot')}</p>
 -- MAGIC <div style="display:flex;gap:36px;flex-wrap:wrap">
--- MAGIC {card('Evaluated order items', n)}{card('On time', pct(weighted('on_time_rate')))}
+-- MAGIC {card('Evaluated schedule lines', n)}{card('On time', pct(weighted('on_time_rate')))}
 -- MAGIC {card('In full', pct(weighted('in_full_rate')))}
--- MAGIC {card('Coverage of attributable monthly items', pct(n / candidates if candidates else None))}
+-- MAGIC {card('Coverage of attributable monthly schedule lines', pct(n / candidates if candidates else None))}
 -- MAGIC </div><h2>Up to three worst-performing suppliers</h2><p>{escape(notice)}</p>
 -- MAGIC <table style="border-collapse:collapse;text-align:left"><tr>
--- MAGIC <th>Rank</th><th>Supplier</th><th>On time</th><th>In full</th><th>Score</th><th>Order items</th><th>Coverage</th>
+-- MAGIC <th>Rank</th><th>Supplier</th><th>On time</th><th>In full</th><th>Score</th><th>Schedule lines</th><th>Coverage</th>
 -- MAGIC </tr>{rows_html}</table>
 -- MAGIC <p>Rates explain the performance_score. They do not establish operational causes at the supplier.
 -- MAGIC Unassigned data is outside monthly coverage. See quality limitations below.</p>
@@ -95,7 +95,7 @@
 
 -- COMMAND ----------
 -- MAGIC %python
--- MAGIC chart_rows = sorted([r for r in monthly if r.evaluated_order_item_count > 0 and r.performance_score is not None],
+-- MAGIC chart_rows = sorted([r for r in monthly if r.evaluated_schedule_line_count > 0 and r.performance_score is not None],
 -- MAGIC                     key=lambda r: (float(r.performance_score), r.supplier_id))
 -- MAGIC if chart_rows:
 -- MAGIC     positions = np.arange(len(chart_rows))
@@ -105,10 +105,10 @@
 -- MAGIC     ax.barh(positions + 0.18, [100 * float(r.in_full_rate) for r in chart_rows],
 -- MAGIC             height=0.34, color="#3b947c", label="In full by month end")
 -- MAGIC     ax.set_yticks(positions)
--- MAGIC     ax.set_yticklabels([f"{r.supplier_name} · {r.supplier_id} (n={r.evaluated_order_item_count})" for r in chart_rows])
+-- MAGIC     ax.set_yticklabels([f"{r.supplier_name} · {r.supplier_id} (n={r.evaluated_schedule_line_count})" for r in chart_rows])
 -- MAGIC     ax.invert_yaxis()
 -- MAGIC     ax.set_xlim(0, 100)
--- MAGIC     ax.set_xlabel("Share of evaluated order items (%)")
+-- MAGIC     ax.set_xlabel("Share of evaluated schedule lines (%)")
 -- MAGIC     ax.set_title(f"Supplier comparison {month:%Y-%m}")
 -- MAGIC     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=2)
 -- MAGIC     ax.grid(axis="x", alpha=0.2)
@@ -122,15 +122,15 @@
 -- MAGIC %md
 -- MAGIC ## Monthly trend
 -- MAGIC Same branch, all available months up to the selected month.
--- MAGIC Rates are weighted by evaluated order item counts. Composition and coverage may change.
+-- MAGIC Rates are weighted by evaluated schedule line counts. Composition and coverage may change.
 
 -- COMMAND ----------
 -- MAGIC %python
 -- MAGIC trend = spark.sql("""
--- MAGIC  SELECT report_month, SUM(evaluated_order_item_count) AS evaluated_order_item_count,
--- MAGIC         SUM(on_time_rate * evaluated_order_item_count) / NULLIF(SUM(evaluated_order_item_count), 0) AS on_time_rate,
--- MAGIC         SUM(in_full_rate * evaluated_order_item_count) / NULLIF(SUM(evaluated_order_item_count), 0) AS in_full_rate,
--- MAGIC         SUM(evaluated_order_item_count) / NULLIF(SUM(candidate_order_item_count), 0) AS evaluation_coverage_rate
+-- MAGIC  SELECT report_month, SUM(evaluated_schedule_line_count) AS evaluated_schedule_line_count,
+-- MAGIC         SUM(on_time_rate * evaluated_schedule_line_count) / NULLIF(SUM(evaluated_schedule_line_count), 0) AS on_time_rate,
+-- MAGIC         SUM(in_full_rate * evaluated_schedule_line_count) / NULLIF(SUM(evaluated_schedule_line_count), 0) AS in_full_rate,
+-- MAGIC         SUM(evaluated_schedule_line_count) / NULLIF(SUM(candidate_schedule_line_count), 0) AS evaluation_coverage_rate
 -- MAGIC  FROM IDENTIFIER(:catalog || '.' || :gold_schema || '.' || :table_prefix || 'supplier_monthly')
 -- MAGIC  WHERE report_month <= CAST(:report_month AS DATE) AND """ + scope_filter + """
 -- MAGIC  GROUP BY report_month ORDER BY report_month
@@ -157,7 +157,7 @@
 -- COMMAND ----------
 -- MAGIC %md
 -- MAGIC ## Results and supporting records
--- MAGIC Show ranking and suppliers, then supporting purchase order items.
+-- MAGIC Show ranking and suppliers, then supporting schedule-line performance.
 -- MAGIC Use optional po_number and po_item filters for delivery evidence.
 -- COMMAND ----------
 -- An empty selected month is visible and is not automatically a data error.
@@ -171,7 +171,7 @@ WHERE report_month = CAST(:report_month AS DATE)
 
 -- COMMAND ----------
 SELECT report_month, report_scope, branch_code, worst_supplier_rank, supplier_id, supplier_name,
-       evaluated_order_item_count, excluded_order_item_count, evaluation_coverage_rate,
+       evaluated_schedule_line_count, excluded_schedule_line_count, evaluation_coverage_rate,
        on_time_rate, in_full_rate, mean_quantity_fill_rate, performance_score
 FROM IDENTIFIER(:catalog || '.' || :gold_schema || '.' || :table_prefix || 'worst_suppliers')
 WHERE report_month = CAST(:report_month AS DATE)
@@ -198,7 +198,7 @@ WITH worst AS (
          OR (:branch <> 'ALL' AND report_scope = 'BRANCH' AND branch_code = :branch))
 )
 SELECT p.*
-FROM IDENTIFIER(:catalog || '.' || :gold_schema || '.' || :table_prefix || 'order_item_performance') p
+FROM IDENTIFIER(:catalog || '.' || :gold_schema || '.' || :table_prefix || 'schedule_line_performance') p
 JOIN worst w ON p.supplier_id = w.supplier_id
 WHERE p.report_month = CAST(:report_month AS DATE)
   AND (:branch = 'ALL' OR p.branch_code = :branch)
@@ -207,7 +207,7 @@ ORDER BY p.supplier_id, p.sap_client_id, p.purchase_order_id, p.purchase_order_i
 -- COMMAND ----------
 -- Optional order filters; empty values show all delivery evidence for the selected month.
 SELECT *
-FROM IDENTIFIER(:catalog || '.' || :gold_schema || '.' || :table_prefix || 'delivery_evidence')
+FROM IDENTIFIER(:catalog || '.' || :gold_schema || '.' || :table_prefix || 'delivery_allocations')
 WHERE report_month = CAST(:report_month AS DATE)
   AND (:po_number = '' OR purchase_order_id = :po_number)
   AND (:po_item = '' OR purchase_order_item_id = :po_item)
@@ -228,15 +228,15 @@ ORDER BY reason;
 -- COMMAND ----------
 -- Check all visible data, independent of the selected month.
 WITH items AS (
-  SELECT * FROM IDENTIFIER(:catalog || '.' || :gold_schema || '.' || :table_prefix || 'order_item_performance')
+  SELECT * FROM IDENTIFIER(:catalog || '.' || :gold_schema || '.' || :table_prefix || 'schedule_line_performance')
 ), monthly AS (
   SELECT * FROM IDENTIFIER(:catalog || '.' || :gold_schema || '.' || :table_prefix || 'supplier_monthly')
 ), checks AS (
   SELECT 'GOLD_ITEMS_PRESENT' AS check_name,
          CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END AS violations FROM items
   UNION ALL
-  SELECT 'UNIQUE_ORDER_ITEM_KEY', COUNT(*) FROM (
-    SELECT sap_client_id, purchase_order_id, purchase_order_item_id FROM items GROUP BY sap_client_id, purchase_order_id, purchase_order_item_id HAVING COUNT(*) > 1
+  SELECT 'UNIQUE_SCHEDULE_LINE_KEY', COUNT(*) FROM (
+    SELECT sap_client_id, purchase_order_id, purchase_order_item_id, schedule_line_id FROM items GROUP BY sap_client_id, purchase_order_id, purchase_order_item_id, schedule_line_id HAVING COUNT(*) > 1
   ) duplicates
   UNION ALL
   SELECT 'EVALUATED_ITEMS_HAVE_KPI', COUNT(*) FROM items
@@ -246,7 +246,7 @@ WITH items AS (
   WHERE NOT is_evaluable AND (is_on_time IS NOT NULL OR is_in_full IS NOT NULL OR quantity_fill_rate IS NOT NULL)
   UNION ALL
   SELECT 'MONTHLY_COUNTS_BALANCE', COUNT(*) FROM monthly
-  WHERE candidate_order_item_count <> evaluated_order_item_count + excluded_order_item_count
+  WHERE candidate_schedule_line_count <> evaluated_schedule_line_count + excluded_schedule_line_count
   UNION ALL
   SELECT 'MONTHLY_RATES_IN_RANGE', COUNT(*) FROM monthly
   WHERE on_time_rate NOT BETWEEN 0 AND 1 OR in_full_rate NOT BETWEEN 0 AND 1
@@ -254,7 +254,7 @@ WITH items AS (
      OR evaluation_coverage_rate NOT BETWEEN 0 AND 1
   UNION ALL
   SELECT 'EVALUATED_MONTHS_HAVE_RATES', COUNT(*) FROM monthly
-  WHERE evaluated_order_item_count > 0 AND (on_time_rate IS NULL OR in_full_rate IS NULL OR performance_score IS NULL)
+  WHERE evaluated_schedule_line_count > 0 AND (on_time_rate IS NULL OR in_full_rate IS NULL OR performance_score IS NULL)
 )
 SELECT check_name, violations, CASE WHEN violations = 0 THEN 'PASS' ELSE 'CHECK' END AS status
 FROM checks ORDER BY check_name;
@@ -293,7 +293,7 @@ ORDER BY branch_code, purchase_order_id, purchase_order_item_id, schedule_line_i
 -- MAGIC %md
 -- MAGIC ## FIFO schedule-line results
 -- MAGIC Each plan is evaluated against its own date and month end. Links are inferred.
--- MAGIC These results do not yet feed the legacy ranking above; supplier weighting is pending.
+-- MAGIC These schedule-line results are the evidence for the supplier ranking above.
 
 -- COMMAND ----------
 SELECT * FROM IDENTIFIER(:catalog || '.' || :gold_schema || '.' || :table_prefix || 'schedule_line_performance')

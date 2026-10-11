@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # Gold: Monthly supplier performance
 # MAGIC FIFO allocations and schedule-line performance use each scheduled date and its month end.
-# MAGIC Existing supplier rankings retain the labelled legacy final-date method until weights are agreed.
+# MAGIC Supplier monthly rates and rankings give each evaluable schedule line equal weight.
 # MAGIC See DATA_RULES.md for the approved allocation rule, exclusions and limitations.
 # MAGIC Branch names follow the customer mapping. The delivery-date interpretation remains provisional.
 
@@ -20,7 +20,7 @@ for key, default in [("bronze_schema", "dev_bronze"), ("silver_schema", "dev_sil
                      ("table_prefix", "dev_"), ("branch_groups_json", "{}"), ("central_group", "")]:
     dbutils.widgets.text(key, default, key.replace("_", " ").title())
 dbutils.widgets.text("as_of_date", "2026-09-30", "Evaluation cutoff (assumption, yyyy-MM-dd)")
-dbutils.widgets.text("min_items", "1", "Minimum evaluated order items for ranking")
+dbutils.widgets.text("min_items", "1", "Minimum evaluated schedule lines for ranking")
 
 catalog = dbutils.widgets.get("catalog").strip()
 layer_schemas = {layer: dbutils.widgets.get(layer + "_schema").strip()
@@ -72,10 +72,10 @@ column_names = {
     "LFIMG": "delivered_quantity", "MENGE": "ordered_quantity", "TXZ01": "item_description",
     "NETPR": "net_unit_price", "NETWR": "net_order_value", "WAERS": "currency_code",
     "ETENR": "schedule_line_id", "EINDT": "scheduled_delivery_date", "WEMNG": "recorded_received_quantity",
-    "_is_deleted": "is_deleted", "candidate_items": "candidate_order_item_count",
-    "evaluated_items": "evaluated_order_item_count", "excluded_items": "excluded_order_item_count",
+    "_is_deleted": "is_deleted", "candidate_items": "candidate_schedule_line_count",
+    "evaluated_items": "evaluated_schedule_line_count", "excluded_items": "excluded_schedule_line_count",
     "scope": "report_scope", "coverage_rate": "evaluation_coverage_rate",
-    "score": "performance_score", "min_items": "minimum_order_item_count",
+    "score": "performance_score", "min_items": "minimum_schedule_line_count",
     "ranking_eligible": "is_ranking_eligible", "worst_rank": "worst_supplier_rank",
     "ordered_qty": "ordered_quantity", "scheduled_qty": "scheduled_quantity",
     "schedule_count": "schedule_line_count", "delivered_by_due_qty": "delivered_by_due_quantity",
@@ -101,12 +101,12 @@ dataset_descriptions = {'purchase_order_items': 'OPERATIONAL DETAIL | Primary so
  'order_item_performance': 'DERIVED ANALYSIS | Bronze EKPO supplies candidate keys. Silver EKPO, EKKO, EKET, '
                            'LIPS, LIKP and LFA1 plus quarantine supply validated context. Calculates '
                            'item-level performance and exclusion reasons.',
- 'supplier_monthly': 'DERIVED AGGREGATE | Aggregates order_item_performance by supplier, month and '
+ 'supplier_monthly': 'DERIVED AGGREGATE | Aggregates FIFO schedule_line_performance with equal line weights by supplier, month and '
                      'company/branch scope. Calculates rates, score, sample size, coverage and ranking '
                      'eligibility.',
  'worst_suppliers': 'DERIVED RANKING | Ranks eligible supplier_monthly results. Up to three lowest-scoring '
                     'suppliers per month and company/branch scope.',
- 'quality_summary': 'DERIVED QUALITY SUMMARY | Counts order_item_performance evaluation/exclusion reasons '
+ 'quality_summary': 'DERIVED QUALITY SUMMARY | Counts schedule_line_performance evaluation/exclusion reasons '
                     'and unassigned_quarantine records. Reasons can overlap. Central access only.',
  'unassigned_quarantine': 'DERIVED QUALITY DETAIL | Silver quarantine records from EKPO, EKET and LIPS that '
                           'cannot be matched to Bronze EKPO item keys. Includes raw records and validation '
@@ -118,7 +118,7 @@ dataset_descriptions.update({
     "schedule_line_performance": "DERIVED ANALYSIS | One Bronze schedule key with valid Silver context where available. FIFO on-time/full-by-month-end results; month follows the individual scheduled date. No supplier weighting chosen.",
     "delivery_allocation_balance": "DERIVED CONTROL | One valid delivery item. Delivered = allocated + unallocated quantity. Distinguishes overdelivery, excluded items and deliveries after cutoff.",
 })
-for legacy_name in ("supplier_monthly", "worst_suppliers", "order_item_performance", "delivery_evidence"):
+for legacy_name in ("order_item_performance", "delivery_evidence"):
     dataset_descriptions[legacy_name] = "LEGACY FINAL-DATE METHOD | " + dataset_descriptions[legacy_name]
 branches = read("silver_branch_mapping").select(
     F.col("WERKS").alias("branch_code"), F.col("BRANCH_NAME").alias("branch_name")
@@ -256,40 +256,6 @@ details = (details
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Monthly metrics and ranking
-# MAGIC Each evaluable order item has equal weight. Do not add quantities across different units.
-# MAGIC Score is the mean of the on-time and in-full rates. Lower values are worse.
-# MAGIC ALL covers the company; BRANCH calculates each branch separately.
-
-# COMMAND ----------
-monthly_base = details.filter(
-    F.col("LIFNR").isNotNull() & F.col("report_month").isNotNull()
-    & (F.col("evaluation_date") <= F.lit(as_of_date).cast("date"))
-)
-scoped = (monthly_base.withColumn("scope", F.lit("BRANCH"))
-          .unionByName(monthly_base.withColumn("WERKS", F.lit(None).cast("string"))
-                       .withColumn("scope", F.lit("ALL"))))
-monthly = scoped.groupBy("report_month", "scope", "WERKS", "LIFNR", "NAME1").agg(
-    F.count("*").alias("candidate_items"),
-    F.sum(F.col("is_evaluable").cast("long")).alias("evaluated_items"),
-    F.avg(F.col("on_time").cast("double")).alias("on_time_rate"),
-    F.avg(F.col("in_full").cast("double")).alias("in_full_rate"),
-    F.avg("fill_rate").alias("mean_fill_rate"),
-)
-monthly = (monthly.withColumn("excluded_items", F.col("candidate_items") - F.col("evaluated_items"))
-           .withColumn("coverage_rate", F.col("evaluated_items") / F.col("candidate_items"))
-           .withColumn("score", (F.col("on_time_rate") + F.col("in_full_rate")) / 2)
-           .withColumn("ranking_eligible", F.col("evaluated_items") >= min_items)
-           .withColumn("min_items", F.lit(min_items)))
-ranking_window = Window.partitionBy("report_month", "scope", "WERKS").orderBy(
-    F.col("score").asc(), F.col("on_time_rate").asc(), F.col("in_full_rate").asc(),
-    F.col("evaluated_items").desc(), F.col("LIFNR").asc(),
-)
-ranking = monthly.filter("ranking_eligible").withColumn("worst_rank", F.row_number().over(ranking_window))
-worst_three = ranking.filter(F.col("worst_rank") <= 3)
-
-# COMMAND ----------
-# MAGIC %md
 # MAGIC ## FIFO allocation and individual schedule performance
 # MAGIC Earliest due schedule receives earliest actual delivery quantities first.
 # MAGIC Equal dates are ordered by source IDs. Early deliveries may satisfy future schedules.
@@ -411,10 +377,50 @@ if (allocations.filter(F.col("allocated_quantity").isNull() | (F.col("allocated_
     or schedule_performance.filter(F.col("allocated_quantity") > F.col("schedule_quantity")).limit(1).count()):
     raise ValueError("FIFO quantity conservation failed")
 
-# Weights for schedule-based supplier aggregation are still pending user decision.
 details = details.withColumn("metric_basis", F.lit("LEGACY_ORDER_ITEM_FINAL_DATE"))
-monthly = monthly.withColumn("metric_basis", F.lit("LEGACY_ORDER_ITEM_FINAL_DATE"))
-worst_three = worst_three.withColumn("metric_basis", F.lit("LEGACY_ORDER_ITEM_FINAL_DATE"))
+schedule_performance = schedule_performance.withColumn("metric_basis", F.lit("FIFO_SCHEDULE_LINE_EQUAL_WEIGHT"))
+
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## Monthly metrics and ranking
+# MAGIC Each evaluable schedule line has equal weight. Do not add quantities across different units.
+# MAGIC Score is the mean of the on-time and in-full rates. Lower values are worse.
+# MAGIC ALL covers the company; BRANCH calculates each branch separately.
+
+# COMMAND ----------
+monthly_base = schedule_performance.filter(
+    F.col("LIFNR").isNotNull() & F.col("report_month").isNotNull()
+    & (F.col("evaluation_date") <= F.lit(as_of_date).cast("date"))
+)
+scoped = (monthly_base.withColumn("scope", F.lit("BRANCH"))
+          .unionByName(monthly_base.withColumn("WERKS", F.lit(None).cast("string"))
+                       .withColumn("scope", F.lit("ALL"))))
+scoped.createOrReplaceTempView("supplier_schedule_month_input")
+monthly_query = """
+SELECT report_month, scope, WERKS, LIFNR, NAME1,
+       COUNT(*) AS candidate_items,
+       SUM(CAST(is_evaluable AS INT)) AS evaluated_items,
+       AVG(CASE WHEN is_evaluable THEN CAST(on_time AS DOUBLE) END) AS on_time_rate,
+       AVG(CASE WHEN is_evaluable THEN CAST(in_full AS DOUBLE) END) AS in_full_rate,
+       AVG(CASE WHEN is_evaluable THEN fill_rate END) AS mean_fill_rate
+FROM supplier_schedule_month_input
+GROUP BY report_month, scope, WERKS, LIFNR, NAME1
+"""
+monthly = spark.sql(monthly_query)
+monthly = (monthly.withColumn("excluded_items", F.col("candidate_items") - F.col("evaluated_items"))
+           .withColumn("coverage_rate", F.col("evaluated_items") / F.col("candidate_items"))
+           .withColumn("score", (F.col("on_time_rate") + F.col("in_full_rate")) / 2)
+           .withColumn("ranking_eligible", F.col("evaluated_items") >= min_items)
+           .withColumn("min_items", F.lit(min_items))
+           .withColumn("metric_basis", F.lit("FIFO_SCHEDULE_LINE_EQUAL_WEIGHT")))
+ranking_window = Window.partitionBy("report_month", "scope", "WERKS").orderBy(
+    F.col("score").asc(), F.col("on_time_rate").asc(), F.col("in_full_rate").asc(),
+    F.col("evaluated_items").desc(), F.col("LIFNR").asc(),
+)
+ranking = monthly.filter("ranking_eligible").withColumn("worst_rank", F.row_number().over(ranking_window))
+worst_three = ranking.filter(F.col("worst_rank") <= 3)
+
+
 
 # COMMAND ----------
 # MAGIC %md
@@ -423,7 +429,7 @@ worst_three = worst_three.withColumn("metric_basis", F.lit("LEGACY_ORDER_ITEM_FI
 # MAGIC Unassigned deliveries and missing schedules limit conclusions; inspect quality results.
 
 # COMMAND ----------
-quality = details.select(F.explode(F.when(F.col("is_evaluable"), F.array(F.lit("EVALUATED")))
+quality = schedule_performance.select(F.explode(F.when(F.col("is_evaluable"), F.array(F.lit("EVALUATED")))
                                     .otherwise(F.col("exclusion_reasons"))).alias("reason"))
 quality = quality.groupBy("reason").count().withColumnRenamed("count", "item_or_record_count")
 unknown_quality = unassigned.groupBy("source_table").count().select(
