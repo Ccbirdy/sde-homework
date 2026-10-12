@@ -42,6 +42,7 @@ def table_path(name):
 # COMMAND ----------
 # Process master data and headers before dependent items.
 specs = {
+    "branch_mapping": {"key": ["WERKS"], "required": ["BRANCH_NAME"]},
     "lfa1": {"key": ["LIFNR"], "required": ["NAME1"]},
     "mara": {"key": ["MATNR"], "required": ["MEINS"]},
     "ekko": {
@@ -112,6 +113,7 @@ def compare(frame, left, right, reason):
 
 # COMMAND ----------
 quarantine_frames = []
+superseded_frames = []
 summary_rows = []
 for name, spec in specs.items():
     source = spark.table(table_path(f"bronze_{name}"))
@@ -139,7 +141,6 @@ for name, spec in specs.items():
         frame = frame.withColumn(column, F.upper(value) if column in uppercase_fields else value)
 
     frame = frame.withColumn("_key_variants", F.count("*").over(Window.partitionBy(*spec["key"])))
-    frame = flag(frame, F.col("_key_variants") > 1, "CONFLICTING_KEY")
     for column in dict.fromkeys(spec["key"] + spec["required"]):
         frame = flag(frame, F.col(column).isNull(), f"MISSING:{column}")
 
@@ -153,6 +154,36 @@ for name, spec in specs.items():
         frame = flag(frame, F.col(column).isNotNull() & F.col("_parsed").isNull(),
                      f"INVALID_DATE:{column}")
         frame = frame.drop(column).withColumnRenamed("_parsed", column)
+
+    # Case-study decision: EKKO.AEDAT is a version-order proxy, not a verified change date.
+    # Resolve only when every variant has a date and the newest date has one variant.
+    # Select before reference validation: an invalid newest record never revives an older one.
+    superseded_count = 0
+    if name == "ekko":
+        key_window = Window.partitionBy(*spec["key"])
+        frame = (frame.withColumn("_latest_aedat", F.max("AEDAT").over(key_window))
+                 .withColumn("_dated_variants", F.count("AEDAT").over(key_window)))
+        frame = frame.withColumn("_latest_variants", F.sum(
+            F.when(F.col("AEDAT") == F.col("_latest_aedat"), 1).otherwise(0)
+        ).over(key_window))
+        frame = frame.withColumn("_can_resolve", (F.col("_dated_variants") == F.col("_key_variants"))
+                                 & (F.col("_latest_variants") == 1))
+        superseded = frame.filter(F.col("_can_resolve") & (F.col("AEDAT") < F.col("_latest_aedat")))
+        superseded_count = superseded.count()
+        superseded_frames.append(superseded.select(
+            F.lit(name).alias("source_table"),
+            F.to_json(F.struct(*[F.col(c) for c in spec["key"]])).alias("candidate_key"),
+            "_raw_record", "_source_occurrences", "_source_files", "_bronze_loaded_at",
+            F.col("AEDAT").alias("reference_date"),
+            F.col("_latest_aedat").alias("selected_reference_date"),
+            F.lit("LATEST_AEDAT_DEMO_PROXY").alias("selection_rule"),
+            F.current_timestamp().alias("_processed_at"),
+        ))
+        frame = frame.filter(~F.col("_can_resolve") | (F.col("AEDAT") == F.col("_latest_aedat")))
+        frame = flag(frame, (F.col("_key_variants") > 1) & ~F.col("_can_resolve"), "CONFLICTING_KEY")
+        frame = frame.drop("_latest_aedat", "_dated_variants", "_latest_variants", "_can_resolve")
+    else:
+        frame = flag(frame, F.col("_key_variants") > 1, "CONFLICTING_KEY")
 
     for column in spec.get("numbers", []):
         # Accept a decimal dot or comma; no thousands separator.
@@ -209,8 +240,12 @@ for name, spec in specs.items():
         F.coalesce(F.sum(F.when(F.size("_dq_errors") == 0, 1).otherwise(0)), F.lit(0)).alias("silver_rows"),
         F.coalesce(F.sum(F.when(F.size("_dq_errors") > 0, 1).otherwise(0)), F.lit(0)).alias("quarantine_rows"),
     ).first()
-    summary_rows.append((name, counts.source_rows, counts.source_rows - counts.distinct_rows,
-                         counts.silver_rows, counts.quarantine_rows))
+    bronze_rows = source.count()
+    original_distinct_rows = source.select(*fields).distinct().count()
+    if original_distinct_rows != counts.silver_rows + counts.quarantine_rows + superseded_count:
+        raise ValueError(f"{name}: Silver/quarantine/superseded reconciliation failed")
+    summary_rows.append((name, bronze_rows, bronze_rows - original_distinct_rows,
+                         counts.silver_rows, counts.quarantine_rows, superseded_count))
 
 # COMMAND ----------
 # MAGIC %md
@@ -219,9 +254,11 @@ for name, spec in specs.items():
 # COMMAND ----------
 quarantine = reduce(lambda left, right: left.unionByName(right), quarantine_frames)
 quarantine.write.format("delta").mode("overwrite").saveAsTable(table_path("silver_quarantine"))
+superseded_records = reduce(lambda left, right: left.unionByName(right), superseded_frames)
+superseded_records.write.format("delta").mode("overwrite").saveAsTable(table_path("silver_superseded_records"))
 summary = spark.createDataFrame(
     summary_rows,
-    "source_table STRING, bronze_rows LONG, duplicate_rows_removed LONG, silver_rows LONG, quarantine_rows LONG",
+    "source_table STRING, bronze_rows LONG, duplicate_rows_removed LONG, silver_rows LONG, quarantine_rows LONG, superseded_rows LONG",
 )
-summary.write.format("delta").mode("overwrite").saveAsTable(table_path("silver_load_summary"))
+summary.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(table_path("silver_load_summary"))
 display(summary)
