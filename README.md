@@ -1,166 +1,131 @@
-# Supplier performance
+# Supplier performance on Databricks
 
-A reproducible Databricks case solution that turns seven SAP-style CSV extracts and a customer branch mapping into monthly supplier performance, branch reports and traceable purchasing/delivery records. Business interpretations and limitations are recorded in [DATA_RULES.md](DATA_RULES.md); implementation does not imply customer confirmation.
+This project was developed for the Senior Data Engineer technical assessment and discussion with Data Insight Consulting. It uses the fictional Nordbau Handels GmbH scenario: a building-materials supplier with branches in Hamburg, Bremen, Hannover and Rostock.
+
+The objective is to turn seven SAP ECC CSV extracts and a customer-provided branch mapping into a repeatable monthly evaluation: identify the three weakest suppliers, explain their results through delivery evidence, and prepare access so purchasing employees see only their own branch. The solution is packaged as a Databricks Asset Bundle with `dev` and `prod` targets.
+
+This document describes the demonstration scope, architecture and answers to the assessment requirements. [DATA_RULES.md](DATA_RULES.md) records the data decisions, customer clarifications, assumptions and limitations. Customer-confirmed facts are distinguished from rules chosen for this case.
+
+## Setup
+
+The seven source CSV files and `BRANCH_MAPPING.csv` have been uploaded to the Workspace Landing Zone:
+
+```text
+/Workspace/Users/guochengcheng93@gmail.com/landing_zone_case_solution
+```
+
+The SAP extracts contain supplier and material master data, purchase orders, planned delivery schedules and delivery records. The branch mapping associates WERKS 2000 with Hamburg, 2100 with Bremen, 2200 with Hannover and 2300 with Rostock. Local originals remain in `../DIC_Arbeitsprobe_Testdaten_SAP_MM/`; the solution repository does not duplicate them.
+
+Unity Catalog holds the catalog, schema, table and view definitions and their permissions. Bronze, Silver and physical Gold results are stored as managed Delta tables. Source-file and load-time metadata are retained with the ingested records.
+
+The demonstration uses an uploaded snapshot. A production ingestion task could retrieve data from an approved SAP interface, API or source export into managed storage, then trigger the same processing stages through a scheduled Job. That source connection is outside this demonstration. The current processing Job has a configured daily schedule, paused for the demonstration; its results are evaluated by month.
 
 ## Data flow and responsibilities
 
 ```text
-Workspace CSV landing folder
-  -> dev_bronze      source strings and ingestion metadata
-  -> dev_silver      typed, validated records + quarantine + reconciliation
-  -> dev_gold_data   physical Delta tables for results and operational data
-  -> dev_gold_views  protected views queried by business users
+Workspace CSV Landing Zone
+  -> Bronze       source strings and ingestion metadata
+  -> Silver       typed, validated records + quarantine + reconciliation
+  -> Gold data    physical Delta results and operational datasets
+  -> Gold views   protected views for business consumption
 ```
 
-All four schemas are in `supplier_performance_dev`. Prod uses `supplier_performance_prod` and the `prod_` prefix. Gold data stores the actual records; Gold views read those records and apply access predicates without making a second copy. Processing identities and administrators maintain the tables. Employees query only the views.
-
-The active landing folder is `/Workspace/Users/guochengcheng93@gmail.com/landing_zone_case_solution`. Configure `source_path` in [databricks.yml](databricks/databricks.yml) to use another Workspace folder. Dev and prod currently share the demonstration input. Local exploration reads `../DIC_Arbeitsprobe_Testdaten_SAP_MM/`; the repository does not keep a second CSV copy.
-
-| Code | Responsibility |
+| Layer | Responsibility |
 |---|---|
-| [00_dataquality.ipynb](databricks/src/00_dataquality.ipynb) | Explore source quality and sample-size thresholds; the final sections distinguish local candidate counts from actual Gold evaluated counts. |
-| [01_bronze.py](databricks/src/01_bronze.py) | Parse all eight CSV files before writing source strings and lineage. |
-| [02_silver.py](databricks/src/02_silver.py) | Type and validate fields, remove exact duplicates, select latest EKKO AEDAT under the demo rule, archive superseded rows, quarantine unresolved/invalid records and reconcile row counts. |
-| [03_gold.py](databricks/src/03_gold.py) | Calculate metrics, publish operational tables and create protected views with group grants. |
-| [05_result_queries.sql](databricks/src/05_result_queries.sql) | Present KPI cards, rankings, trends, evidence, quality checks and operational records. Includes Python plotting cells. |
-| [04_cost_management.py](databricks/src/04_cost_management.py) | Optional interactive cost demonstration or live billing analysis, separate from the processing jobs. |
+| Bronze | Preserve source values, leading zeros and duplicates, with file and load metadata. |
+| Silver | Parse dates and numbers, resolve eligible EKKO conflicts, validate references and units, and retain rejected or superseded records separately. |
+| Gold data | Allocate deliveries to plans, calculate performance and retain traceable operational details. |
+| Gold views | Present readable business columns and apply branch access predicates to the querying identity. |
 
-## Environment isolation and Free Edition limitation
+The Job runs Bronze, Silver and Gold in dependency order. Each run replaces the current snapshot. Incremental ingestion, historical snapshots and a transaction across all output tables are outside the current scope.
 
-This case solution uses Databricks Free Edition, which permits only one workspace per account. The current deployment configuration therefore separates dev and prod by catalog (`supplier_performance_dev` and `supplier_performance_prod`) within the same workspace, with separate schemas and jobs. Selecting `prod` in GitHub Actions does not create or switch to a separate workspace. The prod catalog is created only after running the prod bootstrap; a configured target does not mean that environment has already been deployed.
+## 1. Development and production separation
 
-For a production deployment, the preferred architecture is separate dev and prod workspaces, with separate deployment credentials, jobs and source locations, while retaining separate catalogs. This provides stronger operational isolation. Catalog permissions and, when sharing a Unity Catalog metastore, workspace-catalog bindings must also be configured to control cross-environment data access; separate workspaces alone are not a complete data-access boundary. The current single-workspace setup is a demonstration constraint, not the recommended production architecture.
+Databricks Free Edition allows one workspace and one metastore per account. The demonstration therefore configures both targets in the same workspace, with separate catalogs, schemas and Jobs. [Databricks Free Edition limitations](https://docs.databricks.com/aws/en/getting-started/free-edition-limitations).
 
-Reference: [Databricks Free Edition limitations](https://docs.databricks.com/aws/en/getting-started/free-edition-limitations).
+| Target | Catalog | Schemas | Object prefix |
+|---|---|---|---|
+| `dev` | `supplier_performance_dev` | `dev_bronze`, `dev_silver`, `dev_gold_data`, `dev_gold_views` | `dev_` |
+| `prod` | `supplier_performance_prod` | Corresponding `prod_` schemas | `prod_` |
 
-## First-time setup
+The Asset Bundle defines the code, Jobs and environment configuration in version control. The `prod` target represents the deployment configuration; it does not create a second workspace or establish that production has been deployed. Both targets currently reference the demonstration Landing folder.
 
-Requirements: a Databricks workspace with serverless compute and Default Storage, a deployment identity with catalog creation privileges and access to the source folder, and GitHub Actions configured with repository variable `DATABRICKS_HOST` and secret `DATABRICKS_TOKEN`. Use the same identity for bootstrap and processing, or arrange the required catalog privileges explicitly. This repository pins Databricks CLI 1.20.0 in Actions.
+For a real customer, the proposed design uses separate development and production workspaces, source locations and deployment identities, with catalog permissions and workspace bindings where applicable. This separates operational changes and data access more clearly than the demonstration configuration.
 
-1. Upload these original files to the landing folder: `LFA1_VENDOR_MASTER.csv`, `MARA_MATERIAL_MASTER.csv`, `EKKO_PO_HEADER.csv`, `EKPO_PO_ITEM.csv`, `EKET_SCHEDULE_LINES.csv`, `LIKP_DELIVERY_HEADER.csv`, `LIPS_DELIVERY_ITEM.csv`, plus `BRANCH_MAPPING.csv` (local source: `../DIC_Arbeitsprobe_Testdaten_SAP_MM/BRANCH_MAPPING.csv`). Upload the mapping to the same Workspace folder; deployment does not upload this CSV. Other files are ignored. Files use semicolons and UTF-8, optionally with a BOM.
-2. In GitHub Actions run **Deploy Databricks bootstrap**, selecting `dev` and the code branch to deploy.
-3. In Databricks Jobs & Pipelines run **dev_supplier_performance_initialize_catalog** and wait for success. This runs `CREATE CATALOG IF NOT EXISTS` from the [bootstrap SQL](databricks-bootstrap/src/dev_create_catalog.sql).
-4. Run **Deploy Databricks** for `dev`, then run **dev_supplier_performance** in Databricks to populate the layers.
-5. Run **Run Databricks review**, selecting a month with results and either `ALL` or an exact branch code. Inspect the report and its PASS/CHECK results.
+## 2. Data preparation and quality
 
-Bootstrap is needed once per environment. Its SQL is safe to repeat and preserves an existing catalog. A separate Bundle is necessary because the main Bundle needs the catalog when deploying schemas, before a processing job can execute. For prod, select `prod` and run the corresponding `prod_` jobs.
+Quality rules cover required fields, key conflicts, date and number formats, parent references, quantities, units and consistency between orders and deliveries. Invalid records remain traceable in Silver quarantine with explicit reasons.
 
-The workflow files must exist on GitHub's default branch for their manual **Run workflow** buttons to appear. The branch selector then chooses which version to deploy. Deployment uploads code and configures resources; it does not execute the processing notebooks or upload CSV files. The processing schedule is paused by default.
+Identical duplicates are collapsed. For EKKO, a unique latest AEDAT selects the current record when all conflicting variants have usable dates; older variants remain in `superseded_records`. Using AEDAT for version ordering is a documented assumption for this synthetic dataset. Unresolved conflicts are quarantined.
 
-## Subsequent runs
+Bronze row counts reconcile with removed duplicates, valid Silver rows, quarantine and superseded records. Quality exclusions are reported separately from supplier failures, so unusable evidence does not automatically become a late or missing delivery.
 
-Push the updated code, run **Deploy Databricks** for the intended target, run the processing job, then run the review. The review Action uses the already deployed job: selecting a different Git branch does not deploy its notebooks. Clear stale manual job parameter overrides when changing configured paths.
+## 3. Supplier performance and the three weakest suppliers
 
-The main parameters are `source_path`, `as_of_date` (default `2026-09-30`), `min_items` (default `1`), `branch_groups_json` and `central_group`. Set persistent access settings in the target variables in [databricks.yml](databricks/databricks.yml). Each processing run replaces the snapshot; there is no incremental history or cross-table transaction. A failed run can leave partial results. Resolve the failure and rerun before presenting the report.
+The business result is published in **`supplier_performance_dev.dev_gold_views.dev_worst_suppliers`**. It contains up to three eligible suppliers with the lowest score for each month, for the whole company and separately for each branch. Physical results are stored in `dev_gold_data`.
 
-CLI alternative, from the repository root after configuring a Databricks authentication profile:
+The evaluation unit is a planned delivery line. Within one purchase-order item, actual deliveries are allocated to the earliest scheduled delivery first (FIFO). One delivery can satisfy several plans, and several deliveries can satisfy one plan. The allocation is inferred because the extract contains no direct link between actual and planned deliveries.
 
-```powershell
-# Once per environment
-Set-Location databricks-bootstrap
-databricks bundle validate -t dev -p supplier-performance
-databricks bundle deploy -t dev -p supplier-performance
-databricks bundle run initialize_catalog -t dev -p supplier-performance
+| Measure | Definition |
+|---|---|
+| Reporting month | Month of the individual planned delivery date. Only closed months through the evaluation cutoff are scored. |
+| On-time rate | Share of evaluable plans whose full quantity was allocated by their scheduled date. |
+| In-full rate | Share of evaluable plans whose full quantity was allocated by the end of their scheduled month. |
+| Performance score | Mean of the on-time and in-full rates, with 50% weight each. Lower scores are worse. |
+| Weighting | Every evaluable plan has one vote, independent of quantity or value. Orders with more plans therefore influence the result more. |
+| Coverage | Evaluable plans divided by candidate plans attributable to the supplier and month. It does not measure completeness of the whole export. |
 
-# Deploy and process
-Set-Location ../databricks
-databricks bundle validate -t dev -p supplier-performance
-databricks bundle deploy -t dev -p supplier-performance
-databricks bundle run supplier_performance -t dev -p supplier-performance
-databricks bundle run supplier_performance_review -t dev -p supplier-performance
-```
+The minimum sample defaults to one evaluable plan per supplier, month and scope and is configurable. Results include sample size and coverage. Fewer than three eligible suppliers produce fewer than three ranked results. Company-wide rates are calculated from the plans across branches, not by averaging branch percentages.
 
-The Workspace CSV parser holds the small input snapshot in notebook memory before creating Spark DataFrames. It is a case-solution ingestion method, not a large-file ingestion design. Repository CSV fixtures support local exploration; the pipeline reads the uploaded Workspace files.
+The supporting records explain whether a low score comes from missed deadlines or quantities still missing at month end. They do not establish the supplier's internal operational cause. The [result review](databricks/src/05_result_queries.sql) presents rankings, comparisons, trends and evidence from the same Gold views.
 
-## Where to find and present the conclusions
+### Gold datasets
 
-Start with **dev_supplier_performance_review** and choose `report_month` and `branch`. Its output is the presentation entry point. The business results are views under `supplier_performance_dev.dev_gold_views`, all prefixed `dev_`:
+The names below are suffixes; dev views use `supplier_performance_dev.dev_gold_views.dev_<suffix>` and corresponding physical tables use `dev_gold_data`.
 
-| Presentation step | View suffix | What it answers |
-|---|---|---|
-| 1. Monthly overview | `supplier_monthly` | How did each supplier perform? Show evaluated sample size, coverage, on-time/in-full rates and score together. |
-| 2. Suppliers needing review | `worst_suppliers` | Which up to three eligible suppliers scored lowest in this month and scope? |
-| 3. Explain a result | `order_item_performance`, `delivery_evidence` | Which items and deliveries support the result, and which items were excluded? |
-| 4. Operational detail | `purchase_order_items`, `schedule_lines`, `delivery_items` | What was ordered, scheduled and delivered in the user's branch? These include valid open/future records beyond the performance month. |
-| 5. Qualification of conclusions | `quality_summary`, `unassigned_quarantine` | What data-quality limitations affect interpretation? These views are central-only. |
+| Dataset | Purpose and source relationship |
+|---|---|
+| `worst_suppliers` | Up to three lowest-scoring eligible suppliers per month and reporting scope. |
+| `supplier_monthly` | Supplier rates, score, plan counts, coverage and ranking eligibility. Derived from schedule-line performance. |
+| `schedule_line_performance` | Per-plan FIFO evaluation, scheduled month, allocated quantities, KPI results and exclusion reasons. |
+| `delivery_allocations` | Trace from each EKET plan to LIPS/LIKP delivery evidence, with allocated quantity and the inferred allocation rule. |
+| `delivery_allocation_balance` | Delivered, allocated and unallocated quantities; distinguishes excess, excluded records and deliveries after cutoff. |
+| `purchase_order_items` | EKPO order items enriched with EKKO headers and LFA1 supplier context. |
+| `schedule_lines` | Valid EKET plans enriched with order, supplier, material and branch context. |
+| `delivery_items` | Valid LIPS/LIKP deliveries enriched with purchasing and supplier context. |
+| `branch_mapping` | Customer-provided branch codes and names from the Landing reference file. |
+| `quality_summary` | Schedule evaluation/exclusion counts and unassigned quarantine counts; central access only. |
+| `unassigned_quarantine` | EKPO/EKET/LIPS quarantine records that cannot be matched to an original order-item key; central access only. |
+| `order_item_performance`, `delivery_evidence` | Auxiliary comparison using the previous final-order-date method. Explicitly labelled legacy; not used in the current supplier ranking. |
 
-Example, using the querying user's own identity:
+Operational datasets also include valid open and future records. MARA supports material and unit validation in Silver and is not published as a separate Gold dataset.
 
-```sql
-SELECT report_month, branch_code, supplier_id, supplier_name,
-       evaluated_schedule_line_count, evaluation_coverage_rate,
-       on_time_rate, in_full_rate, performance_score
-FROM supplier_performance_dev.dev_gold_views.dev_supplier_monthly
-WHERE report_month = DATE '2026-09-01'
-ORDER BY performance_score, supplier_id;
-```
+## 4. Branch access control
 
-For the FIFO schedule-line supplier ranking, the score is the mean of the on-time and in-full rates. Each evaluated schedule line has equal weight; amounts and quantities do not weight the ranking. On time means the full schedule quantity allocated by its own scheduled date, while in full means complete by reporting month end. Lower scores are worse. Rates are stored between 0 and 1.
+Business users access protected views in `dev_gold_views`. The physical backing tables are in `dev_gold_data`. The [Gold implementation](databricks/src/03_gold.py) generates view predicates that compare each row's `branch_code` with the querying user's configured account-group membership through `is_account_group_member()`.
 
-The minimum sample remains **1 evaluated item per supplier/month/scope**. Small samples can produce extreme scores. The local source preview found no eligible candidate populations at thresholds 10 or 20; actual Gold evaluated counts are the basis for choosing the threshold. Do not interpret the weakest-three output as a reliable long-term supplier judgement without reviewing sample size, exclusions and the unconfirmed delivery-date semantics. The report computes the current conclusion from the loaded snapshot; this README does not hard-code a winning or losing supplier.
+For monthly results, branch users can see only their matching branch and `report_scope = 'BRANCH'`. Company-wide `ALL` results and unassigned quality records are reserved for the publishing identity and the optional central group. A report's branch selector changes the display; the view predicate enforces access.
 
-## How Gold relates to the source files
+This implements row filtering through **dynamic views and group membership**. Databricks native ABAC uses governed tags and centralized policies; those policies are not configured in this demonstration. The branch attribute and group mapping express the required access rule without claiming a native ABAC deployment. [Dynamic views](https://docs.databricks.com/aws/en/views/dynamic), [Unity Catalog ABAC](https://docs.databricks.com/aws/en/data-governance/unity-catalog/abac/core-concepts).
 
-All Gold objects are created by this pipeline. Operational details retain source record grains but add related fields; analytical outputs add calculations. Bronze and Silver retain the source-oriented names (`dev_eket`, `dev_ekpo`, etc.). Catalog Explorer descriptions label every Gold table and view with its category and source lineage.
+The supplied configuration has no employee-group mapping and grants no branch access by default. The access design requires approved group membership and no direct or inherited access to backing tables, Bronze or Silver. Real-user isolation has not been demonstrated. Production validation would check separate branch identities and a user without a branch group; administrators and object owners remain privileged.
 
-| Gold name suffix | Category | Main source relationship |
-|---|---|---|
-| `purchase_order_items` | Operational detail | EKPO items + EKKO headers + LFA1 supplier names. |
-| `schedule_lines` | Operational detail | EKET schedules + EKPO/EKKO/LFA1 context. |
-| `delivery_items` | Operational detail | LIPS items + LIKP headers + EKPO/EKKO/LFA1 context. |
-| `delivery_evidence` | Derived evidence | Delivery items linked to item evaluation, with EKET deadlines and computed timing flags. |
-| `order_item_performance` | Derived analysis | Bronze EKPO keys + validated Silver orders, schedules, deliveries, suppliers and quarantine. |
-| `supplier_monthly` | Derived aggregate | Item performance aggregated by supplier/month/scope/branch. |
-| `worst_suppliers` | Derived ranking | Up to three eligible lowest-scoring monthly suppliers. |
-| `quality_summary` | Derived quality summary | Evaluation/exclusion reasons and unassigned quarantine counts. |
-| `unassigned_quarantine` | Derived quality detail | EKPO/EKET/LIPS quarantine records not matched to Bronze EKPO item keys. |
+## 5. Decisions, assumptions and scope
 
-MARA supports material/unit validation in Silver and is not published as its own Gold dataset. These are principal relationships, not a complete column-level lineage inventory. In particular, delivery evidence is not a copy of EKET: EKET contains planned schedule lines, while LIPS/LIKP supply delivery records. Business meanings remain subject to DATA_RULES.md.
+[DATA_RULES.md](DATA_RULES.md) is the detailed decision record. It covers customer answers, source-field interpretations, key handling, FIFO allocation, equal plan weighting, metric definitions, exclusions and limitations.
 
-## How branch isolation works
+The main boundaries are the uploaded snapshot, the assumed evaluation cutoff, use of WADAT_IST as the evaluation date, and inferred delivery allocation. Missing usable evidence alone does not prove non-delivery. The design can be extended with invoice and complaint data linked to purchasing and delivery identifiers, as envisaged in the scenario; those sources are not part of this implementation.
 
-Implementation: the **Publish protected Gold views** section at the end of [03_gold.py](databricks/src/03_gold.py). The notebook generates a `WHERE` predicate using `is_account_group_member()` for the querying identity. For monthly aggregates, branch users additionally require `report_scope = 'BRANCH'`, so they cannot see company totals. Operational views apply the same branch membership check. This follows [Databricks dynamic-view access control](https://docs.databricks.com/aws/en/views/dynamic).
+An additional [cost notebook](databricks/src/04_cost_management.py) offers a clearly labelled simulation and a separate mode for billing-system queries. It is outside the core supplier assessment and does not represent a verified invoice or enforce spending limits.
 
-Example configuration under the appropriate target's `variables` (group names and codes are illustrative, not provisioned or approved):
+## Repository guide
 
-```yaml
-branch_groups_json: '{"2100":"supplier_branch_2100","2200":"supplier_branch_2200"}'
-central_group: 'supplier_central'
-```
-
-Create the account groups and assign approved employees first, configure the exact source branch codes, then deploy and rerun Gold through the processing job. By default the mapping is `{}` and the central group is empty, so no employee access is granted. A user belonging to several configured branch groups can see all of those branches. Group membership must reflect approved access.
-
-Conceptually, the branch part of a monthly-view predicate is:
-
-```sql
-report_scope = 'BRANCH' AND (
-  (branch_code = '2100' AND is_account_group_member('supplier_branch_2100'))
-  OR (branch_code = '2200' AND is_account_group_member('supplier_branch_2200'))
-)
-```
-
-The full generated predicate also permits the publishing identity and the optional central group to read all rows. Quality summaries and unassigned quarantine are limited to those central readers. The notebook grants configured groups `USE CATALOG`, `USE SCHEMA` on Gold views and `SELECT` on their applicable views.
-
-Employees must not have direct or inherited `SELECT` on Gold data, Bronze or Silver, broad catalog `SELECT`/`ALL PRIVILEGES`, or ownership/management rights allowing them to change the security boundary. Administrators and owners are privileged. Employees must query with their own identities; do not give them access to owner-identity processing/review jobs or their global outputs. A report branch widget is only a display filter, not an access control.
-
-Before employee release, verify group membership and inherited grants, then test using two real branch identities: each must see its own branch, no other branch or ALL aggregate, and be denied direct Gold-data reads. Also test a user with no authorised group. The implemented predicates do not constitute a completed real-user access test.
-
-## Business rules and optional cost analysis
-
-[DATA_RULES.md](DATA_RULES.md) contains the field interpretations, candidate keys, quarantine rules, metric/exclusion definitions and dataset grains. `WERKS` as branch and `WADAT_IST` as actual delivery date remain unconfirmed interpretations. Readable aliases do not confirm these meanings.
-
-The cost notebook supports `demo` (synthetic usage/prices) and `live` (billing system tables requiring separate access). Live estimates use time-matched list prices, exclude contract discounts and separate cloud invoices, and report missing prices. Its budget covers the selected date period; reduction scenarios are hypothetical. Notebook execution itself can incur compute costs. Job resource tags identify project, environment and cost centre; no serverless usage policy is bound. A shared run identity does not identify the person who started each run.
-
-## Approved reference and EKKO update (2026-10-11)
-
-Gold adds customer-confirmed branch names from Landing -> Bronze -> Silver and publishes a protected `branch_mapping` view. Unknown codes remain visible with `branch_mapping_status = UNMAPPED`. Existing access controls continue to use branch codes.
-
-Silver uses EKKO.AEDAT as an explicitly authorised synthetic-case version proxy. Six local conflicting keys have unique latest dates. Older rows go to `dev_superseded_records`; unresolved ties and missing dates remain quarantined. No date proxy is applied to other SAP tables. Reconciliation includes the new `superseded_rows` column. FIFO delivery allocation and per-schedule evaluation have since been approved and implemented. On 2026-10-12 the owner approved equal schedule-line weights; supplier rankings now use FIFO schedule results.
-
-## FIFO schedule evaluation
-
-Gold now adds `delivery_allocations`, `schedule_line_performance` and `delivery_allocation_balance`. Plans are ordered by due date and plan ID; deliveries by actual date and delivery IDs within each order item. Quantities are split as needed without double counting. Each plan uses its own due date for on-time status and its own month end for in-full status. See DATA_RULES.md for cutoff, exclusion, excess and early-delivery handling.
-
-Supplier rankings use equal schedule-line weights, with `metric_basis = FIFO_SCHEDULE_LINE_EQUAL_WEIGHT`. Counts, minimum sample threshold (`min_items`), coverage and trends use schedule lines. The score still averages on-time and in-full rates with 50% each. Auxiliary order_item_performance and delivery_evidence retain legacy final-date results for comparison only; ranking evidence uses schedule_line_performance and delivery_allocations. Redeploy the review and rerun Gold together because public sample-count columns now end in schedule_line_count instead of order_item_count.
-
-Local tests: `.venv/Scripts/python.exe -m unittest discover -s tests -v`. These execute the production allocation SQL using SQLite and do not replace a Databricks Spark run.
+| Location | Contents |
+|---|---|
+| `databricks/src/00_dataquality.ipynb` | Initial exploration of the local SAP extracts. |
+| `databricks/src/01_bronze.py` to `03_gold.py` | Ingestion, validation, allocation, metrics and protected views. |
+| `databricks/src/05_result_queries.sql` | Business result review and supporting checks. |
+| `databricks/src/04_cost_management.py` | Optional cost analysis. |
+| `databricks/databricks.yml`, `databricks/resources/` | Asset Bundle targets, schemas and Jobs. |
+| `tests/` | Focused allocation and equal-weight aggregation tests. |
+| `DATA_RULES.md` | Public data decisions and assumptions. |
