@@ -1,20 +1,46 @@
 # Supplier performance on Databricks
 
-This project was developed for the Senior Data Engineer technical assessment and discussion with Data Insight Consulting. It uses the fictional Nordbau Handels GmbH scenario: a building-materials supplier with branches in Hamburg, Bremen, Hannover and Rostock.
+This project demonstrates data management and supplier performance analysis on Databricks. It simulates a project for Nordbau Handels GmbH, a fictional building-materials company with branches in Hamburg, Bremen, Hannover and Rostock.
 
-The objective is to turn seven SAP ECC CSV extracts and a customer-provided branch mapping into a repeatable monthly evaluation: identify the three weakest suppliers, explain their results through delivery evidence, and prepare access so purchasing employees see only their own branch. The solution is packaged as a Databricks Asset Bundle with `dev` and `prod` targets.
+**Project goals from the case brief**
 
-This document describes the demonstration scope, architecture and answers to the assessment requirements. [DATA_RULES.md](DATA_RULES.md) records the data decisions, customer clarifications, assumptions and limitations. Customer-confirmed facts are distinguished from rules chosen for this case.
+- Build an automated, traceable Databricks solution for monthly supplier performance analysis from seven SAP ECC extracts.
+- Define data-quality rules, performance metrics and a justified evaluation granularity to assess punctual and complete deliveries.
+- Identify the three weakest suppliers and explain their results through purchasing and delivery evidence.
+- Prepare the data model for purchasers to access only their own branch and for later integration of invoices and complaints.
+- Deliver code, Jobs and configuration as a Databricks Asset Bundle with `dev` and `prod` targets, and document decisions and assumptions.
+
+**Implementation checklist**
+
+Checked items describe implemented code and configuration; operational limitations are stated alongside them.
+
+- [x] Prepare the seven extracts and customer branch mapping through Bronze, Silver and Gold, including quality checks and quarantine.
+- [x] Calculate monthly on-time and in-full performance with equal weight per planned delivery line, and retain FIFO allocation evidence.
+- [x] Provide up to three weakest eligible suppliers per month, company-wide and per branch, with supporting delivery records.
+- [x] Define a processing Job with dependent tasks and a schedule. The current schedule runs daily and is paused for the demonstration; results are monthly.
+- [x] Implement branch predicates in protected views. Employee-group configuration and validation with separate user identities remain outstanding.
+- [x] Package code, Jobs and configuration with `dev` and `prod` targets. A separate production deployment has not been demonstrated.
+- [x] Document assumptions, metric definitions and limitations in [DATA_RULES.md](DATA_RULES.md); retain purchasing and delivery identifiers for future invoice and complaint integration. Those additional sources are outside the current implementation.
+
+**Documentation**
+
+- This README: demonstration scope, architecture and solution overview.
+- [DATA_RULES.md](DATA_RULES.md): customer clarifications, data decisions, assumptions and limitations.
 
 ## Setup
 
-The seven source CSV files and `BRANCH_MAPPING.csv` have been uploaded to the Workspace Landing Zone:
+The seven source [CSV files](data/) and `BRANCH_MAPPING.csv` have been uploaded as Workspace Files to storage managed by Databricks. In this demonstration, the project uses a folder named `landing_zone_case_solution` in the user's Workspace area as its Landing Zone. This is a project folder, not a predefined Databricks landing directory; the source location is configurable through the Bundle's `source_path` variable.
 
-```text
-/Workspace/Users/guochengcheng93@gmail.com/landing_zone_case_solution
-```
-
-The SAP extracts contain supplier and material master data, purchase orders, planned delivery schedules and delivery records. The branch mapping associates WERKS 2000 with Hamburg, 2100 with Bremen, 2200 with Hannover and 2300 with Rostock. Local originals remain in `../DIC_Arbeitsprobe_Testdaten_SAP_MM/`; the solution repository does not duplicate them.
+| Source file | Table / reference | Contents |
+|---|---|---|
+| `LFA1_VENDOR_MASTER.csv` | LFA1 | Supplier identifiers, names and master data. |
+| `MARA_MATERIAL_MASTER.csv` | MARA/MAKT | Material identifiers, descriptions and base units. |
+| `EKKO_PO_HEADER.csv` | EKKO | Purchase-order headers, including supplier and order date. |
+| `EKPO_PO_ITEM.csv` | EKPO | Ordered materials, quantities, prices and receiving plants. |
+| `EKET_SCHEDULE_LINES.csv` | EKET | Planned delivery dates and quantities for each order item. |
+| `LIKP_DELIVERY_HEADER.csv` | LIKP | Delivery headers, including supplier and goods-movement date. |
+| `LIPS_DELIVERY_ITEM.csv` | LIPS | Delivered materials, quantities and purchase-order references. |
+| `BRANCH_MAPPING.csv` | Customer reference | WERKS plant code → branch name: 2000 Hamburg, 2100 Bremen, 2200 Hannover, 2300 Rostock. |
 
 Unity Catalog holds the catalog, schema, table and view definitions and their permissions. Bronze, Silver and physical Gold results are stored as managed Delta tables. Source-file and load-time metadata are retained with the ingested records.
 
@@ -37,7 +63,7 @@ Workspace CSV Landing Zone
 | Gold data | Allocate deliveries to plans, calculate performance and retain traceable operational details. |
 | Gold views | Present readable business columns and apply branch access predicates to the querying identity. |
 
-The Job runs Bronze, Silver and Gold in dependency order. Each run replaces the current snapshot. Incremental ingestion, historical snapshots and a transaction across all output tables are outside the current scope.
+The Job runs Bronze, Silver and Gold in dependency order. Each run replaces the current snapshot. Incremental ingestion, historical snapshots and coordinated publication across output tables are not implemented yet and could be added in a future extension.
 
 ## 1. Development and production separation
 
@@ -48,21 +74,30 @@ Databricks Free Edition allows one workspace and one metastore per account. The 
 | `dev` | `supplier_performance_dev` | `dev_bronze`, `dev_silver`, `dev_gold_data`, `dev_gold_views` | `dev_` |
 | `prod` | `supplier_performance_prod` | Corresponding `prod_` schemas | `prod_` |
 
-The Asset Bundle defines the code, Jobs and environment configuration in version control. The `prod` target represents the deployment configuration; it does not create a second workspace or establish that production has been deployed. Both targets currently reference the demonstration Landing folder.
+An Asset Bundle keeps processing code, Jobs and configuration together. Targets reuse the same processing logic and table definitions while supplying environment-specific settings. With separate workspaces, this allows a version to be tested in dev and deployed to prod for downstream use. [Bundle overview](https://docs.databricks.com/aws/en/dev-tools/bundles/).
 
-For a real customer, the proposed design uses separate development and production workspaces, source locations and deployment identities, with catalog permissions and workspace bindings where applicable. This separates operational changes and data access more clearly than the demonstration configuration.
+For a production setup, targets can select different workspaces, data locations, deployment identities and compute settings. RBAC permissions and ABAC policies can also be tailored to each environment through the appropriate governance configuration. Compute capacity can be matched to each environment's workload and cost needs.
+
+In this demonstration, dev and prod share one Free Edition workspace and the same uploaded input. The prod target is configured; this does not mean a separate production environment has already been deployed. The implemented branch controls are described below.
 
 ## 2. Data preparation and quality
 
-Quality rules cover required fields, key conflicts, date and number formats, parent references, quantities, units and consistency between orders and deliveries. Invalid records remain traceable in Silver quarantine with explicit reasons.
+- An initial quality review identifies issues in the source files.
+- Bronze, Silver and Gold process the data according to the responsibilities above.
+- Records with unresolved quality issues are retained in quarantine, with reasons for review and discussion.
+- Data-quality exclusions remain separate from supplier delivery failures.
 
-Identical duplicates are collapsed. For EKKO, a unique latest AEDAT selects the current record when all conflicting variants have usable dates; older variants remain in `superseded_records`. Using AEDAT for version ordering is a documented assumption for this synthetic dataset. Unresolved conflicts are quarantined.
-
-Bronze row counts reconcile with removed duplicates, valid Silver rows, quarantine and superseded records. Quality exclusions are reported separately from supplier failures, so unusable evidence does not automatically become a late or missing delivery.
+Detailed rules and decisions are documented in [DATA_RULES.md](DATA_RULES.md).
 
 ## 3. Supplier performance and the three weakest suppliers
 
-The business result is published in **`supplier_performance_dev.dev_gold_views.dev_worst_suppliers`**. It contains up to three eligible suppliers with the lowest score for each month, for the whole company and separately for each branch. Physical results are stored in `dev_gold_data`.
+The business result is published in **`supplier_performance_dev.dev_gold_views.dev_worst_suppliers`**. It contains up to three eligible suppliers with the lowest score for each month, for the whole company and separately for each branch. The Unity Catalog hierarchy is:
+
+| Level | Business access | Physical result |
+|---|---|---|
+| Catalog | `supplier_performance_dev` | `supplier_performance_dev` |
+| Schema | `dev_gold_views` | `dev_gold_data` |
+| Object | `dev_worst_suppliers` — protected view | `dev_worst_suppliers` — Delta table |
 
 The evaluation unit is a planned delivery line. Within one purchase-order item, actual deliveries are allocated to the earliest scheduled delivery first (FIFO). One delivery can satisfy several plans, and several deliveries can satisfy one plan. The allocation is inferred because the extract contains no direct link between actual and planned deliveries.
 
@@ -116,8 +151,6 @@ The supplied configuration has no employee-group mapping and grants no branch ac
 
 The main boundaries are the uploaded snapshot, the assumed evaluation cutoff, use of WADAT_IST as the evaluation date, and inferred delivery allocation. Missing usable evidence alone does not prove non-delivery. The design can be extended with invoice and complaint data linked to purchasing and delivery identifiers, as envisaged in the scenario; those sources are not part of this implementation.
 
-An additional [cost notebook](databricks/src/04_cost_management.py) offers a clearly labelled simulation and a separate mode for billing-system queries. It is outside the core supplier assessment and does not represent a verified invoice or enforce spending limits.
-
 ## Repository guide
 
 | Location | Contents |
@@ -125,7 +158,6 @@ An additional [cost notebook](databricks/src/04_cost_management.py) offers a cle
 | `databricks/src/00_dataquality.ipynb` | Initial exploration of the local SAP extracts. |
 | `databricks/src/01_bronze.py` to `03_gold.py` | Ingestion, validation, allocation, metrics and protected views. |
 | `databricks/src/05_result_queries.sql` | Business result review and supporting checks. |
-| `databricks/src/04_cost_management.py` | Optional cost analysis. |
 | `databricks/databricks.yml`, `databricks/resources/` | Asset Bundle targets, schemas and Jobs. |
 | `tests/` | Focused allocation and equal-weight aggregation tests. |
 | `DATA_RULES.md` | Public data decisions and assumptions. |
